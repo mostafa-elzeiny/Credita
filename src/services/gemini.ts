@@ -1,4 +1,4 @@
-import { GoogleGenAI, GenerateContentResponse, Type, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 
 export interface FinancialData {
   companyName?: string;
@@ -324,36 +324,63 @@ Return ONLY a valid JSON object.
 `;
 
 export async function extractFinancialData(file: File, highPrecision = false): Promise<FinancialData> {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
+  
+  if (!apiKey) {
+    throw new Error("Gemini API Key is missing. Please check your environment variables.");
+  }
+
   const base64Data = await fileToBase64(file);
   const mimeType = file.type;
-  
-  // Get API key from localStorage if user has configured it
-  const clientApiKey = localStorage.getItem('GEMINI_API_KEY');
 
-  try {
-    const response = await fetch("/api/extract", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        base64Data: base64Data.split(",")[1],
-        mimeType: mimeType,
-        clientApiKey: clientApiKey // Send the key to the server
-      }),
-    });
+  const prompt = SYSTEM_PROMPT;
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || "Failed to extract data from server");
+  const executeExtraction = async (retryCount = 0): Promise<FinancialData> => {
+    const ai = new GoogleGenAI({ apiKey });
+    const modelName = "gemini-3-flash-preview";
+    
+    try {
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model: modelName,
+        contents: [
+          {
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  data: base64Data.split(",")[1],
+                  mimeType: mimeType,
+                },
+              },
+            ],
+          },
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: FINANCIAL_DATA_SCHEMA,
+          temperature: 0.1,
+        }
+      });
+
+      const text = response.text || "{}";
+      const rawData = JSON.parse(text);
+      return sanitizeFinancialData(rawData);
+    } catch (error: any) {
+      const errorString = JSON.stringify(error);
+      console.error(`Gemini Extraction Error:`, errorString);
+      
+      const isQuotaError = errorString.includes("429") || errorString.includes("RESOURCE_EXHAUSTED");
+
+      if (isQuotaError && retryCount < 1) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return executeExtraction(retryCount + 1);
+      }
+
+      throw new Error(error?.message || "Extraction failed");
     }
+  };
 
-    const rawData = await response.json();
-    return sanitizeFinancialData(rawData);
-  } catch (error: any) {
-    console.error("Extraction Error:", error);
-    throw error;
-  }
+  return executeExtraction();
 }
 
 // Keep for compatibility but use parallel single extractions for better speed

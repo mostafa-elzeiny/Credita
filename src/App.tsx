@@ -108,8 +108,6 @@ function FinSpreadApp() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isUpdatePasswordOpen, setIsUpdatePasswordOpen] = useState(false);
   const [newPassword, setNewPassword] = useState('');
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [tempApiKey, setTempApiKey] = useState(localStorage.getItem('GEMINI_API_KEY') || '');
 
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -750,13 +748,6 @@ function FinSpreadApp() {
                 />
               </div>
             <div className="flex items-center gap-4">
-              <button 
-                onClick={() => setIsSettingsOpen(true)}
-                className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
-                title="API Settings"
-              >
-                <RefreshCcw className="w-5 h-5" />
-              </button>
               <button 
                 onClick={() => setDarkMode(!darkMode)}
                 className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
@@ -2150,82 +2141,6 @@ function FinSpreadApp() {
           </div>
         </div>
       </footer>
-
-      {/* API Settings Modal */}
-      <AnimatePresence>
-        {isSettingsOpen && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsSettingsOpen(false)}
-              className="absolute inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-md overflow-hidden"
-            >
-              <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-credita/10 flex items-center justify-center">
-                    <Key className="w-5 h-5 text-credita" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold text-slate-900 dark:text-white">API Settings</h3>
-                    <p className="text-xs text-slate-500">Configure your Gemini API Key</p>
-                  </div>
-                </div>
-                <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
-                  <X className="w-5 h-5 text-slate-400" />
-                </button>
-              </div>
-              
-              <div className="p-6 space-y-4">
-                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900/30 p-4 rounded-xl">
-                  <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
-                    <strong>One-time setup:</strong> Enter your Gemini API Key here to enable financial statement processing on this device. The key is saved securely in your browser.
-                  </p>
-                </div>
-                
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Gemini API Key</label>
-                  <div className="relative">
-                    <input 
-                      type="password"
-                      value={tempApiKey}
-                      onChange={(e) => setTempApiKey(e.target.value)}
-                      placeholder="Paste your API key here..."
-                      className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-credita outline-none transition-all font-mono text-sm"
-                    />
-                  </div>
-                </div>
-              </div>
-              
-              <div className="p-6 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex gap-3">
-                <button 
-                  onClick={() => setIsSettingsOpen(false)}
-                  className="flex-1 px-4 py-2 text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={() => {
-                    localStorage.setItem('GEMINI_API_KEY', tempApiKey);
-                    setIsSettingsOpen(false);
-                    alert('API Key saved successfully!');
-                  }}
-                  className="flex-1 px-4 py-2 bg-credita text-white text-sm font-bold rounded-lg hover:opacity-90 shadow-lg shadow-credita/20 transition-all"
-                >
-                  Save Key
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* Contact Support Modal */}
       <AnimatePresence>

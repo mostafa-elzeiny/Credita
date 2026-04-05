@@ -76,54 +76,6 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // Server-side Gemini Extraction
-  app.post("/api/extract", async (req, res) => {
-    const { base64Data, mimeType, clientApiKey } = req.body;
-    // Priority: 1. Key from client (UI), 2. Server environment variables
-    const apiKey = clientApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY || process.env.GOOGLE_API_KEY;
-
-    if (!apiKey) {
-      return res.status(400).json({ error: "API Key is missing. Please configure it in the app settings (gear icon)." });
-    }
-
-    try {
-      const ai = new GoogleGenAI({ apiKey });
-      const model = "gemini-3-flash-preview";
-      
-      const response: GenerateContentResponse = await ai.models.generateContent({
-        model: model,
-        contents: [
-          {
-            parts: [
-              { text: SYSTEM_PROMPT },
-              {
-                inlineData: {
-                  data: base64Data,
-                  mimeType: mimeType,
-                },
-              },
-            ],
-          },
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: FINANCIAL_DATA_SCHEMA,
-          temperature: 0.1,
-        }
-      });
-
-      if (!response.text) {
-        throw new Error("Empty response from Gemini");
-      }
-
-      const data = JSON.parse(response.text);
-      res.json(data);
-    } catch (error: any) {
-      console.error("Extraction Error:", error);
-      res.status(500).json({ error: error.message || "Failed to extract data" });
-    }
-  });
-
   app.post("/api/contact", express.json(), async (req, res) => {
     const { name, email, message } = req.body;
     
