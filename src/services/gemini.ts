@@ -1,4 +1,4 @@
-import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Type, ThinkingLevel } from "@google/genai";
 
 export interface FinancialData {
   companyName?: string;
@@ -324,10 +324,10 @@ Return ONLY a valid JSON object.
 `;
 
 export async function extractFinancialData(file: File, highPrecision = false): Promise<FinancialData> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : null);
   
   if (!apiKey) {
-    throw new Error("Gemini API Key is missing. Please check your environment variables.");
+    throw new Error("Gemini API Key is missing. If you are using Vercel, make sure to add VITE_GEMINI_API_KEY to Environment Variables and REDEPLOY your app.");
   }
 
   const base64Data = await fileToBase64(file);
@@ -359,6 +359,7 @@ export async function extractFinancialData(file: File, highPrecision = false): P
           responseMimeType: "application/json",
           responseSchema: FINANCIAL_DATA_SCHEMA,
           temperature: 0.1,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
         }
       });
 
