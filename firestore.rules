@@ -1,0 +1,155 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: /users/{uid}
+    // Document ID: uid
+    // Fields:
+    //   - uid: string (required, immutable) - The unique Firebase Auth UID.
+    //   - email: string (required, format: email) - The user's email address.
+    //   - displayName: string (optional) - The user's display name.
+    //   - role: string (required, enum: ["admin", "user"]) - User role for RBAC.
+    //   - createdAt: timestamp (optional) - Timestamp of profile creation.
+    //   - updatedAt: timestamp (optional) - Timestamp of last update.
+    //
+    // Collection: /statements/{statementId}
+    // Document ID: statementId
+    // Fields:
+    //   - id: string (required, immutable) - Unique ID for the statement.
+    //   - ownerUid: string (required, immutable) - UID of the user who owns this statement.
+    //   - companyName: string (required, max 100 chars) - Name of the company.
+    //   - fiscalYear: int (required, positive) - The year the statement covers.
+    //   - data: map (required) - The raw extracted financial data (JSON).
+    //   - analysis: map (optional) - The AI-generated analysis results.
+    //   - createdAt: timestamp (required, immutable) - Timestamp of creation.
+    //
+    // Collection: /support_messages/{messageId}
+    // Document ID: messageId
+    // Fields:
+    //   - id: string (required, immutable) - Unique ID for the message.
+    //   - name: string (required, max 100 chars) - Name of the sender.
+    //   - email: string (required, format: email) - Email of the sender.
+    //   - message: string (required, max 5000 chars) - The message content.
+    //   - createdAt: timestamp (required, immutable) - Timestamp of message creation.
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "mostafa.elzeiny11@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isCompanyUser() {
+      return isAuthenticated() && 
+             request.auth.token.email_verified == true && 
+             (request.auth.token.email.lower().endsWith('@truelease-eg.com') || isAdmin());
+    }
+
+    function isVerified() {
+      return isAuthenticated() && request.auth.token.email_verified == true;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'role']) &&
+             hasOnlyAllowedFields(['uid', 'email', 'displayName', 'role', 'plan', 'dailyUsage', 'createdAt', 'updatedAt']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.role in ['admin', 'user'] &&
+             (!('plan' in data) || data.plan in ['architect', 'company', 'free']);
+    }
+
+    function isValidStatement(data) {
+      return hasRequiredFields(['id', 'ownerUid', 'companyName', 'fiscalYear', 'data']) &&
+             hasOnlyAllowedFields(['id', 'ownerUid', 'companyName', 'fiscalYear', 'data', 'analysis', 'createdAt']) &&
+             data.id is string && data.id.size() > 0 &&
+             data.ownerUid is string && data.ownerUid.size() > 0 &&
+             data.companyName is string && data.companyName.size() > 0 && data.companyName.size() <= 100 &&
+             data.fiscalYear is int && data.fiscalYear > 1900 && data.fiscalYear < 2100 &&
+             data.data is map;
+    }
+
+    function isValidSupportMessage(data) {
+      return hasRequiredFields(['id', 'name', 'email', 'message', 'createdAt']) &&
+             hasOnlyAllowedFields(['id', 'name', 'email', 'message', 'createdAt']) &&
+             data.id is string && data.id.size() > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.message is string && data.message.size() > 0 && data.message.size() <= 5000 &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Match Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
+                      request.resource.data.email == request.auth.token.email &&
+                      (request.resource.data.role == 'user' || isAdmin());
+      
+      allow update: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
+                      request.resource.data.email == request.auth.token.email &&
+                      (request.resource.data.role == resource.data.role || isAdmin());
+      
+      allow delete: if isAdmin();
+    }
+
+    match /statements/{statementId} {
+      allow read: if isVerified() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+      
+      allow create: if isVerified() && isValidStatement(request.resource.data) && 
+                      (request.resource.data.ownerUid == request.auth.uid || isAdmin());
+      
+      allow update: if isVerified() && isValidStatement(request.resource.data) && 
+                      ((resource.data.ownerUid == request.auth.uid && request.resource.data.ownerUid == resource.data.ownerUid) || isAdmin());
+      
+      allow delete: if isVerified() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+    }
+
+    match /support_messages/{messageId} {
+      allow read: if isAdmin();
+      allow create: if isValidSupportMessage(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,37 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700;800;900&display=swap');
+
+@theme {
+  --color-credita: #c41e3a;
+  --color-credita-light: #f8fafc;
+  --color-deep-navy: #020617;
+  --color-neon-blue: #0ea5e9;
+  --font-lexend: "Lexend", sans-serif;
+}
+
+@variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  .dark {
+    --color-credita: #0ea5e9;
+    --color-credita-light: #020617;
+    background-color: var(--color-deep-navy);
+    color: #f8fafc;
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.1) 50%, transparent 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite linear;
+}
+
+.dark .animate-shimmer {
+  background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.05) 50%, transparent 75%);
+  background-size: 200% 100%;
+}
