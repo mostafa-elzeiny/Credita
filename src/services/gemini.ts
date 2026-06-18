@@ -324,7 +324,7 @@ Return ONLY a valid JSON object.
 `;
 
 export async function extractFinancialData(file: File, highPrecision = false): Promise<FinancialData> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : null);
+  const apiKey = (import.meta as any).env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : null);
   
   if (!apiKey) {
     throw new Error("Gemini API Key is missing. If you are using Vercel, make sure to add VITE_GEMINI_API_KEY to Environment Variables and REDEPLOY your app.");
