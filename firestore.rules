@@ -58,8 +58,7 @@ service cloud.firestore {
 
     function isCompanyUser() {
       return isAuthenticated() && 
-             request.auth.token.email_verified == true && 
-             (request.auth.token.email.lower().endsWith('@truelease-eg.com') || isAdmin());
+             request.auth.token.email_verified == true;
     }
 
     function isVerified() {

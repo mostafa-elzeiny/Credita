@@ -119,7 +119,7 @@ function FinSpreadApp() {
   });
 
   const isAdmin = user?.email === 'mostafa.elzeiny11@gmail.com';
-  const isCompanyUser = (user?.email?.toLowerCase().endsWith('@truelease-eg.com') && user?.emailVerified) || isAdmin;
+  const isCompanyUser = user?.emailVerified || isAdmin;
   const userPlan = isAdmin ? 'System Architect' : (isCompanyUser ? 'True Lease Pro User' : 'Free Trial User');
 
   // Check if user needs verification
