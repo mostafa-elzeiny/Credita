@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useMemo, useEffect, ChangeEvent } from 'react';
+import { useState, useMemo, useEffect, useRef, ChangeEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   FileUp, 
@@ -27,16 +27,22 @@ import {
   Trash2,
   MessageSquare,
   Moon,
-  Sun
+  Sun,
+  BarChart3,
+  Printer
 } from 'lucide-react';
 import { utils, writeFile } from 'xlsx';
 import { FinancialData, extractFinancialData, extractFinancialDataBatch } from './services/gemini';
+import { computeFinancialModel } from './services/financialModel';
+import { generatePowerBiExcelWorkbook } from './services/powerBiGenerator';
+import PowerBIDashboard from './components/PowerBIDashboard';
+import { exportDashboardToPdf } from './services/pdfExportService';
 import { auth, db } from './firebase';
 import { 
   signInWithPopup, 
   GoogleAuthProvider, 
   onAuthStateChanged, 
-  signOut,
+  signOut, 
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -95,6 +101,8 @@ function FinSpreadApp() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadType, setUploadType] = useState<'pdf' | 'image'>('pdf');
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [savedStatements, setSavedStatements] = useState<any[]>([]);
@@ -108,6 +116,11 @@ function FinSpreadApp() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isUpdatePasswordOpen, setIsUpdatePasswordOpen] = useState(false);
   const [newPassword, setNewPassword] = useState('');
+  const [isExportingPbix, setIsExportingPbix] = useState(false);
+  const [pbixSuccessModal, setPbixSuccessModal] = useState<{ open: boolean; companyName: string; fileName: string } | null>(null);
+  const [showWebDashboard, setShowWebDashboard] = useState(false);
+  const [dashboardCompact, setDashboardCompact] = useState(true);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -237,21 +250,43 @@ function FinSpreadApp() {
   }
 
 
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (uploadedFiles.length + files.length > 3) {
+  const addFiles = (filesList: File[]) => {
+    if (filesList.length === 0) return;
+    if (uploadedFiles.length + filesList.length > 3) {
       alert("Maximum 3 files allowed.");
       return;
     }
 
-    const newFiles: UploadedFile[] = files.map((file: File) => ({
+    const validFiles = filesList.filter(file => {
+      if (uploadType === 'pdf') {
+        return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      } else {
+        return file.type.startsWith('image/');
+      }
+    });
+
+    if (validFiles.length === 0) {
+      alert(`Please upload valid ${uploadType.toUpperCase()} files.`);
+      return;
+    }
+
+    const newFiles: UploadedFile[] = validFiles.map((file: File) => ({
       file,
       year: '',
       id: Math.random().toString(36).substr(2, 9),
       status: 'idle'
     }));
 
-    setUploadedFiles([...uploadedFiles, ...newFiles]);
+    setUploadedFiles(prev => [...prev, ...newFiles]);
+  };
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    addFiles(files);
+    // Reset file input so selecting the same file again triggers onChange
+    if (e.target) {
+      e.target.value = '';
+    }
   };
 
   const removeFile = (id: string) => {
@@ -293,34 +328,42 @@ function FinSpreadApp() {
     }, 4000);
 
     const idleFiles = uploadedFiles.filter(f => f.status === 'idle');
+    const results: { fileId: string; success: boolean; data?: FinancialData; year?: string }[] = [];
     
     const extractionPromises = idleFiles.map(async (file, index) => {
-      // Small stagger to prevent immediate rate limiting while maintaining parallelism
-      await new Promise(resolve => setTimeout(resolve, index * 800));
+      // Stagger slightly to avoid burst rate limits
+      await new Promise(resolve => setTimeout(resolve, index * 1000));
       
-      setUploadedFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'extracting' } : f));
+      setUploadedFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'extracting', error: undefined } : f));
       
       try {
         const rawData = await extractFinancialData(file.file);
         const data = recalculateFinancials(rawData);
+        const yearStr = data.year?.toString() || 'Unknown';
         setUploadedFiles(prev => prev.map(f => f.id === file.id ? { 
           ...f, 
           data, 
-          year: data.year?.toString() || 'Unknown', 
-          status: 'success' 
+          year: yearStr, 
+          status: 'success',
+          error: undefined 
         } : f));
+        results.push({ fileId: file.id, success: true, data, year: yearStr });
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : 'Extraction failed';
         setUploadedFiles(prev => prev.map(f => f.id === file.id ? { 
           ...f, 
           status: 'error', 
-          error: err instanceof Error ? err.message : 'Extraction failed' 
+          error: errMsg 
         } : f));
+        results.push({ fileId: file.id, success: false });
       }
     });
 
     await Promise.all(extractionPromises);
     clearInterval(interval);
     setIsProcessing(false);
+
+    const successfulItems = results.filter(r => r.success && r.data);
 
     // Update daily usage for free users
     if (!isCompanyUser && !isAdmin) {
@@ -329,7 +372,7 @@ function FinSpreadApp() {
       const dailyUsage = userDoc?.dailyUsage || {};
       const todayCount = dailyUsage[today] || 0;
       
-      const successfulCount = uploadedFiles.filter(f => f.status === 'success').length;
+      const successfulCount = successfulItems.length;
       
       await setDocument('users', user.uid, {
         ...userDoc,
@@ -341,16 +384,15 @@ function FinSpreadApp() {
     }
 
     // Automatically add to session history
-    const successfulFiles = uploadedFiles.filter(f => f.status === 'success' && f.data);
-    if (successfulFiles.length > 0) {
-      const sessionData = successfulFiles.map(f => f.data);
+    if (successfulItems.length > 0) {
+      const sessionData = successfulItems.map(f => f.data!);
       const statementId = Math.random().toString(36).substr(2, 9);
       const newStatement = {
         id: statementId,
         companyName: 'Session Analysis',
-        fiscalYear: successfulFiles[successfulFiles.length - 1].year,
+        fiscalYear: successfulItems[successfulItems.length - 1].year || 'Unknown',
         data: sessionData,
-        createdAt: { toDate: () => new Date() } // Mock Firestore timestamp
+        createdAt: { toDate: () => new Date() }
       };
       setSavedStatements(prev => [newStatement, ...prev]);
     }
@@ -392,23 +434,27 @@ function FinSpreadApp() {
   };
 
   const reExtract = async (id: string) => {
-    const fileIndex = uploadedFiles.findIndex(f => f.id === id);
-    if (fileIndex === -1) return;
+    const targetFile = uploadedFiles.find(f => f.id === id);
+    if (!targetFile) return;
 
-    const updatedFiles = [...uploadedFiles];
-    updatedFiles[fileIndex].status = 'extracting';
-    setUploadedFiles([...updatedFiles]);
+    setUploadedFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'extracting', error: undefined } : f));
 
     try {
-      const data = await extractFinancialData(updatedFiles[fileIndex].file, true);
-      updatedFiles[fileIndex].data = data;
-      updatedFiles[fileIndex].year = data.year?.toString() || 'Unknown';
-      updatedFiles[fileIndex].status = 'success';
+      const data = await extractFinancialData(targetFile.file, true);
+      setUploadedFiles(prev => prev.map(f => f.id === id ? {
+        ...f,
+        data,
+        year: data.year?.toString() || 'Unknown',
+        status: 'success',
+        error: undefined
+      } : f));
     } catch (err) {
-      updatedFiles[fileIndex].status = 'error';
-      updatedFiles[fileIndex].error = err instanceof Error ? err.message : 'Extraction failed';
+      setUploadedFiles(prev => prev.map(f => f.id === id ? {
+        ...f,
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Extraction failed'
+      } : f));
     }
-    setUploadedFiles([...updatedFiles]);
   };
 
   const formatCurrency = (val: number) => {
@@ -505,7 +551,7 @@ function FinSpreadApp() {
       ['Interim', ...sortedData.map(d => d.year)],
       ['', ''],
       ['INCOME STATEMENT', ''],
-      ['(US$ thousands)', ...sortedData.map(d => d.year)],
+      ['(EGP in thousands)', ...sortedData.map(d => d.year)],
       ['', ''],
       ['REVENUES', ...sortedData.map(d => formatExcelNum(d.incomeStatement.revenues))],
       ['COST OF GOODS SOLD', ...sortedData.map(d => formatExcelNum(-Math.abs(d.incomeStatement.costOfGoodsSold)))],
@@ -557,7 +603,7 @@ function FinSpreadApp() {
       ['COMMON SHARES OUTSTANDING', ...sortedData.map(() => ({ v: 0, t: 'n', z: '0' }))],
       ['', ''],
       ['BALANCE SHEET', ''],
-      ['(US$ thousands)', ...sortedData.map(d => d.year)],
+      ['(EGP in thousands)', ...sortedData.map(d => d.year)],
       ['', ''],
       ['ASSETS', ''],
       ['CASH', ...sortedData.map(d => formatExcelNum(d.balanceSheet.cash))],
@@ -673,6 +719,91 @@ function FinSpreadApp() {
     writeFile(wb, 'financial_spreading_analysis.xlsx');
   };
 
+  const downloadPowerBI = async () => {
+    if (sortedData.length === 0) return;
+    setIsExportingPbix(true);
+    try {
+      const summary = computeFinancialModel(sortedData);
+      const company = summary.companyName || sortedData[0]?.companyName || 'Credita_Client';
+      const cleanCompany = company.replace(/[^a-zA-Z0-9\u0600-\u06FF_-]/g, '_').trim() || 'Company';
+      const fileName = `${cleanCompany}_Financial_Dashboard.pbix`;
+
+      // 1. Request customized .pbix containing company's real balance sheet & financial spreading data
+      const response = await fetch('/api/generate-pbix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ summary, companyName: cleanCompany })
+      });
+
+      if (!response.ok) {
+        throw new Error('Server returned ' + response.status);
+      }
+
+      const blob = await response.blob();
+      if (blob.size < 10000) {
+        throw new Error('Downloaded file too small');
+      }
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+      }, 3000);
+
+      // Open convenient confirmation dialog
+      setPbixSuccessModal({ open: true, companyName: company, fileName });
+    } catch (err) {
+      console.warn('POST generate-pbix failed, falling back to direct stream:', err);
+      const company = sortedData[0]?.companyName || 'Financial';
+      window.location.href = `/api/download-official-pbix?company=${encodeURIComponent(company)}&t=${Date.now()}`;
+    } finally {
+      setIsExportingPbix(false);
+    }
+  };
+
+  const downloadCompanionExcel = () => {
+    if (sortedData.length === 0) return;
+    const summary = computeFinancialModel(sortedData);
+    const company = summary.companyName || sortedData[0]?.companyName || 'Credita_Client';
+    const cleanCompany = company.replace(/[^a-zA-Z0-9\u0600-\u06FF_-]/g, '_').trim() || 'Company';
+    const blob = generatePowerBiExcelWorkbook(summary);
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${cleanCompany}_Financial_Data.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }, 2000);
+  };
+
+  const handleDownloadOnePagePDF = async () => {
+    setIsExportingPdf(true);
+    setShowWebDashboard(true);
+    setDashboardCompact(true);
+    
+    // Give react time to mount and render the dashboard in compact mode
+    await new Promise(resolve => setTimeout(resolve, 350));
+    
+    try {
+      const company = sortedData[0]?.companyName || 'Financial_Spreading';
+      await exportDashboardToPdf('executive-1page-dashboard', company, sortedData);
+    } catch (err) {
+      console.warn('PDF export error:', err);
+    } finally {
+      setTimeout(() => {
+        setIsExportingPdf(false);
+      }, 1000);
+    }
+  };
+
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !newPassword) return;
@@ -733,7 +864,7 @@ function FinSpreadApp() {
           className="min-h-screen bg-[#f8fafc] dark:bg-deep-navy text-slate-900 dark:text-slate-100 font-lexend selection:bg-credita/10 transition-colors duration-300"
         >
           {/* Header */}
-          <header className="bg-white/80 dark:bg-deep-navy/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 transition-colors duration-300">
+          <header className="bg-white/80 dark:bg-deep-navy/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 transition-colors duration-300 print:hidden">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-24 flex items-center justify-between">
               <div className="flex items-center gap-6">
                 {/* Logo Image (CR) */}
@@ -973,23 +1104,76 @@ function FinSpreadApp() {
                   </button>
                 </div>
 
-                <div className="relative group">
+                <div 
+                  className={`relative rounded-xl transition-all cursor-pointer ${
+                    uploadedFiles.length >= 3 
+                      ? 'opacity-60 cursor-not-allowed' 
+                      : isDragging 
+                        ? 'border-2 border-dashed border-credita dark:border-neon-blue bg-credita/10 dark:bg-neon-blue/10 scale-[1.01]' 
+                        : 'hover:border-credita/50 dark:hover:border-neon-blue/50'
+                  }`}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (uploadedFiles.length < 3) setIsDragging(true);
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDragging(false);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDragging(false);
+                    if (uploadedFiles.length >= 3) return;
+                    const files = Array.from(e.dataTransfer.files || []);
+                    addFiles(files);
+                  }}
+                  onClick={() => {
+                    if (uploadedFiles.length < 3 && fileInputRef.current) {
+                      fileInputRef.current.click();
+                    }
+                  }}
+                >
                   <input 
+                    ref={fileInputRef}
                     type="file" 
                     multiple 
-                    accept={uploadType === 'pdf' ? '.pdf' : 'image/*'}
+                    accept={uploadType === 'pdf' ? '.pdf,application/pdf' : 'image/*'}
                     onChange={handleFileChange}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    className="sr-only"
                     disabled={uploadedFiles.length >= 3}
                   />
-                  <div className={`border-2 border-dashed rounded-xl p-12 text-center transition-all ${uploadedFiles.length >= 3 ? 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700' : 'border-slate-200 dark:border-slate-700 group-hover:border-credita/40 dark:group-hover:border-neon-blue/40 group-hover:bg-credita/5 dark:group-hover:bg-neon-blue/5'}`}>
+                  <div className={`border-2 border-dashed rounded-xl p-12 text-center transition-all ${
+                    uploadedFiles.length >= 3 
+                      ? 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700' 
+                      : isDragging
+                        ? 'border-credita dark:border-neon-blue bg-credita/5 dark:bg-neon-blue/5'
+                        : 'border-slate-200 dark:border-slate-700 hover:border-credita/40 dark:hover:border-neon-blue/40 hover:bg-credita/5 dark:hover:bg-neon-blue/5'
+                  }`}>
                     <div className="w-16 h-16 bg-credita/10 dark:bg-neon-blue/10 rounded-full flex items-center justify-center mx-auto mb-4">
                       <FileUp className="text-credita dark:text-neon-blue w-8 h-8" />
                     </div>
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">
-                      {uploadedFiles.length >= 3 ? 'Maximum files reached' : `Click or drag ${uploadType.toUpperCase()}s here`}
+                      {uploadedFiles.length >= 3 ? 'Maximum files reached (3/3)' : `Click or drag ${uploadType.toUpperCase()}s here`}
                     </h3>
-                    <p className="text-slate-500 dark:text-slate-400 text-sm">Support for Arabic and English statements</p>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm mb-4">
+                      Support for Arabic and English financial statements
+                    </p>
+                    {uploadedFiles.length < 3 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          fileInputRef.current?.click();
+                        }}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700/80 transition-all"
+                      >
+                        <FileUp className="w-4 h-4 text-credita dark:text-neon-blue" />
+                        <span>Browse {uploadType.toUpperCase()} Files</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1128,10 +1312,26 @@ function FinSpreadApp() {
                           </div>
                         </div>
                       ) : f.status === 'error' ? (
-                        <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-xl border border-red-100 dark:border-red-900/30">
+                        <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-xl border border-red-100 dark:border-red-900/30 space-y-3">
                           <p className="text-red-600 dark:text-red-400 text-xs font-medium leading-relaxed">
                             {f.error || 'An unexpected error occurred during extraction.'}
                           </p>
+                          <div className="flex items-center gap-2 pt-1">
+                            <button
+                              onClick={() => reExtract(f.id)}
+                              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
+                            >
+                              <RefreshCcw className="w-3.5 h-3.5" />
+                              إعادة المحاولة / Retry
+                            </button>
+                            <button
+                              onClick={() => removeFile(f.id)}
+                              className="px-3 py-1.5 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-950/50 rounded-lg text-xs font-medium transition-all flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              حذف / Remove
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         <>
@@ -1186,29 +1386,49 @@ function FinSpreadApp() {
               exit={{ opacity: 0, scale: 0.98 }}
               className="space-y-8"
             >
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between print:hidden">
                 <div>
                   <h2 className="text-3xl font-bold text-slate-900 dark:text-white tracking-tight">Spreading Output</h2>
                   <p className="text-slate-500 dark:text-slate-400">Final financial spreading report. You can edit values directly in the table.</p>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <button 
                     onClick={() => setStep('review')}
-                    className="px-6 py-2 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
+                    className="px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all text-sm"
                   >
                     Back to Review
                   </button>
                   <button 
-                    onClick={downloadExcel}
-                    className="px-6 py-2 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700 shadow-lg shadow-green-100 dark:shadow-none transition-all flex items-center gap-2"
+                    id="btn-download-one-page-pdf"
+                    onClick={handleDownloadOnePagePDF}
+                    disabled={isExportingPdf}
+                    className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white dark:bg-white dark:text-slate-950 rounded-xl font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-2 text-sm active:scale-95 border border-slate-700 dark:border-slate-300 disabled:opacity-75 cursor-pointer"
+                    title="تنزيل تقرير الداشبورد المالي كملف PDF في صفحة واحدة A4 Fit"
                   >
-                    <Download className="w-4 h-4" />
-                    Export to Excel
+                    {isExportingPdf ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                        <span>Generating PDF...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Printer className="w-4 h-4 text-amber-400 dark:text-amber-500" />
+                        <span>Download 1-Page PDF</span>
+                      </>
+                    )}
+                  </button>
+                  <button 
+                    onClick={() => setShowWebDashboard(prev => !prev)}
+                    className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all flex items-center gap-2 text-sm shadow-sm"
+                    title="عرض لوحة المؤشرات المالية والتحليل التنفيذي مباشرة"
+                  >
+                    <BarChart3 className="w-4 h-4 text-white" />
+                    {showWebDashboard ? 'Hide Dashboard' : '📊 Executive Dashboard'}
                   </button>
                   <button 
                     onClick={saveToHistory}
                     disabled={isSaving}
-                    className="px-6 py-2 bg-credita dark:bg-neon-blue text-white rounded-xl font-semibold hover:opacity-90 shadow-lg shadow-slate-100 dark:shadow-none transition-all flex items-center gap-2"
+                    className="px-5 py-2 bg-credita dark:bg-neon-blue text-white rounded-xl font-semibold hover:opacity-90 shadow-sm transition-all flex items-center gap-2 text-sm"
                   >
                     {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                     Save to History
@@ -1216,7 +1436,33 @@ function FinSpreadApp() {
                 </div>
               </div>
 
-              <div className="space-y-12">
+              {/* Embedded Interactive BI Dashboard when toggled */}
+              {showWebDashboard && (
+                <div className="mb-10 bg-slate-50 dark:bg-slate-950 p-4 sm:p-6 rounded-2xl border-2 border-indigo-400/40 shadow-xl">
+                  <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-200 dark:border-slate-800 print:hidden">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-indigo-500 animate-pulse"></div>
+                      <span className="font-bold text-slate-900 dark:text-white text-base">
+                        Executive Financial Dashboard ({sortedData[0]?.companyName || 'Corporate Client'})
+                      </span>
+                    </div>
+                    <button 
+                      onClick={() => setShowWebDashboard(false)}
+                      className="text-xs px-3 py-1 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-lg text-slate-700 dark:text-slate-300 font-medium"
+                    >
+                      Close View ✕
+                    </button>
+                  </div>
+                  <PowerBIDashboard 
+                    data={sortedData} 
+                    onBack={() => setShowWebDashboard(false)} 
+                    isDark={darkMode}
+                    initialCompactMode={dashboardCompact}
+                  />
+                </div>
+              )}
+
+              <div className={`space-y-12 ${showWebDashboard ? 'print:hidden' : ''}`}>
                 {/* Income Statement */}
                 <section>
                   <div className="flex items-center gap-3 mb-6">
@@ -2286,6 +2532,8 @@ function FinSpreadApp() {
             </motion.div>
           </div>
         )}
+
+
       </AnimatePresence>
         </motion.div>
       )}

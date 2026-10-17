@@ -1,5 +1,3 @@
-import { GoogleGenAI, GenerateContentResponse, Type, ThinkingLevel } from "@google/genai";
-
 export interface FinancialData {
   companyName?: string;
   year: number;
@@ -120,268 +118,73 @@ export interface FinancialData {
   };
 }
 
-const FINANCIAL_DATA_SCHEMA = {
-  type: Type.OBJECT,
-  properties: {
-    companyName: { type: Type.STRING, description: "The name of the company (e.g., EPIC Free zone)" },
-    year: { type: Type.NUMBER, description: "The fiscal year of the document (e.g., 2024)" },
-    incomeStatement: {
-      type: Type.OBJECT,
-      properties: {
-        revenues: { type: Type.NUMBER },
-        costOfGoodsSold: { type: Type.NUMBER },
-        depreciation1: { type: Type.NUMBER },
-        grossProfit: { type: Type.NUMBER },
-        depreciation2: { type: Type.NUMBER },
-        sgaExpense: { type: Type.NUMBER },
-        provisions1: { type: Type.NUMBER },
-        rd: { type: Type.NUMBER },
-        goodwillAmortization: { type: Type.NUMBER },
-        otherAmortization: { type: Type.NUMBER },
-        netOperatingProfit: { type: Type.NUMBER },
-        grossInterestExpExist: { type: Type.NUMBER },
-        interestExpNew: { type: Type.NUMBER },
-        capitalizedInterest: { type: Type.NUMBER },
-        interestIncome: { type: Type.NUMBER },
-        dividendIncome: { type: Type.NUMBER },
-        provDoubtfulRec: { type: Type.NUMBER },
-        provisions2: { type: Type.NUMBER },
-        fxGL: { type: Type.NUMBER },
-        sundryIncomeExpense1: { type: Type.NUMBER },
-        netProfitBeforeTax: { type: Type.NUMBER },
-        totalTaxExpense: { type: Type.NUMBER },
-        currentTaxExpense: { type: Type.NUMBER },
-        deferredTaxExpense: { type: Type.NUMBER },
-        itc: { type: Type.NUMBER },
-        netProfitAfterTax: { type: Type.NUMBER },
-        minorityInterestExpense: { type: Type.NUMBER },
-        saleOfPlant: { type: Type.NUMBER },
-        sundryIncomeExpense2: { type: Type.NUMBER },
-        npaui: { type: Type.NUMBER },
-        prefShareDividends: { type: Type.NUMBER },
-        commonStockDividends: { type: Type.NUMBER },
-        otherAdjustment: { type: Type.NUMBER },
-        totalChange: { type: Type.NUMBER }
-      },
-      required: ["revenues", "costOfGoodsSold", "grossProfit", "netProfitAfterTax"]
-    },
-    balanceSheet: {
-      type: Type.OBJECT,
-      properties: {
-        cash: { type: Type.NUMBER },
-        marketableSecurities: { type: Type.NUMBER },
-        marketableSecExcess: { type: Type.NUMBER },
-        accountsReceivable: { type: Type.NUMBER },
-        lessAllowances: { type: Type.NUMBER },
-        netReceivables: { type: Type.NUMBER },
-        rawMaterials: { type: Type.NUMBER },
-        workInProgress: { type: Type.NUMBER },
-        finishedGoods: { type: Type.NUMBER },
-        goodsInTransit: { type: Type.NUMBER },
-        totalInventory: { type: Type.NUMBER },
-        advancePayments: { type: Type.NUMBER },
-        nonTradeRec: { type: Type.NUMBER },
-        otherCurrentAssets: { type: Type.NUMBER },
-        dueFromSisterCo1: { type: Type.NUMBER },
-        totalCurrentAssets: { type: Type.NUMBER },
-        land: { type: Type.NUMBER },
-        buildingImprovement: { type: Type.NUMBER },
-        machineryEquipment: { type: Type.NUMBER },
-        constInProgress: { type: Type.NUMBER },
-        grossPlant: { type: Type.NUMBER },
-        lessAccumulatedDep: { type: Type.NUMBER },
-        netPpe: { type: Type.NUMBER },
-        accountsReceivablesLt: { type: Type.NUMBER },
-        dueFromSisterCo2: { type: Type.NUMBER },
-        otherTangibleAsset: { type: Type.NUMBER },
-        deferredTaxAsset: { type: Type.NUMBER },
-        prepaids: { type: Type.NUMBER },
-        goodwill: { type: Type.NUMBER },
-        otherIntangibleAsset: { type: Type.NUMBER },
-        lessAccumAmortization: { type: Type.NUMBER },
-        netIntangibles: { type: Type.NUMBER },
-        totalAssets: { type: Type.NUMBER },
-        shortTermBorrowingExisting: { type: Type.NUMBER },
-        shortTermBorrowingNew: { type: Type.NUMBER },
-        cpSeniorDebtExisting: { type: Type.NUMBER },
-        cpSeniorDebtNew: { type: Type.NUMBER },
-        cpCapLease: { type: Type.NUMBER },
-        cpSubDebtExisting: { type: Type.NUMBER },
-        cpSalesTax: { type: Type.NUMBER },
-        accountsPayable: { type: Type.NUMBER },
-        taxesPayable: { type: Type.NUMBER },
-        accruedExpenses: { type: Type.NUMBER },
-        interestPayable: { type: Type.NUMBER },
-        dividendsPayable: { type: Type.NUMBER },
-        downPayments: { type: Type.NUMBER },
-        dueToSisterCo3: { type: Type.NUMBER },
-        otherCurrentLiability: { type: Type.NUMBER },
-        totCurrentLiabilities: { type: Type.NUMBER },
-        ltLeaseObligation: { type: Type.NUMBER },
-        ltSeniorDebtExisting: { type: Type.NUMBER },
-        ltSeniorDebtNew: { type: Type.NUMBER },
-        ltTaxes: { type: Type.NUMBER },
-        ltSharholderLoan: { type: Type.NUMBER },
-        totalLongTermDebt: { type: Type.NUMBER },
-        otherNonCurrentLiab: { type: Type.NUMBER },
-        totalLiabilities: { type: Type.NUMBER },
-        deferredTaxes: { type: Type.NUMBER },
-        minorityInterest: { type: Type.NUMBER },
-        provisions3: { type: Type.NUMBER },
-        totalGreyArea: { type: Type.NUMBER },
-        preferredStock: { type: Type.NUMBER },
-        commonStock: { type: Type.NUMBER },
-        additionalPaidInCapital: { type: Type.NUMBER },
-        retainedEarningsOpening: { type: Type.NUMBER },
-        plusNetIncome: { type: Type.NUMBER },
-        lessDividends: { type: Type.NUMBER },
-        otherAdjustments: { type: Type.NUMBER },
-        retainedEarningsClosing: { type: Type.NUMBER },
-        ownersAccount: { type: Type.NUMBER },
-        fxAdjustment: { type: Type.NUMBER },
-        legalReserve: { type: Type.NUMBER },
-        totalEquity: { type: Type.NUMBER },
-        totalLiabsAndEquity: { type: Type.NUMBER }
-      },
-      required: ["totalAssets", "totalLiabilities", "totalEquity"]
-    },
-    notes: {
-      type: Type.OBJECT,
-      description: "Extract the 'Note' or 'Breakdown' reference numbers found next to line items (e.g., if 'Cash' has a '1' next to it, notes.cash = '1')",
-      properties: {
-        revenues: { type: Type.STRING },
-        costOfGoodsSold: { type: Type.STRING },
-        grossProfit: { type: Type.STRING },
-        netOperatingProfit: { type: Type.STRING },
-        totalAssets: { type: Type.STRING },
-        totalLiabilities: { type: Type.STRING },
-        totalEquity: { type: Type.STRING },
-      },
-      additionalProperties: { type: Type.STRING }
-    }
-  },
-  required: ["year", "incomeStatement", "balanceSheet", "notes"]
-};
-
-const BATCH_FINANCIAL_DATA_SCHEMA = {
-  type: Type.ARRAY,
-  items: FINANCIAL_DATA_SCHEMA,
-  description: "An array of financial data objects, one for each provided document, in the same order as the documents were provided."
-};
-
-const SYSTEM_PROMPT = `
-You are a world-class Financial Data Extraction Engine.
-Extract financial data from the document with 100% accuracy, following "EPIC" mapping rules.
-
-CRITICAL MAPPING RULES (FOLLOW STRICTLY):
-
-1. INCOME STATEMENT:
-   - REVENUES: Capture top-line sales/revenue. Sum all revenue lines if multiple exist.
-   - DEPRECIATION1: Extract depreciation related to production/COGS. Look in the notes for "مصروف إهلاك آلات و معدات" or similar within the cost breakdown.
-   - COGS: This MUST be the "Total Cost of Sales" MINUS "Depreciation1". If the document shows a total cost line, subtract the depreciation found in the notes from it.
-   - DEPRECIATION2: Extract depreciation related to SG&A or admin (إهلاكات إدارية).
-   - SG&A EXPENSE: Extract general and administrative expenses (مصروفات عمومية و إدارية).
-   - INTEREST EXPENSE (NEW): Map "Interest Expense" (فوائد بنكية مدينة / مصروفات تمويلية).
-   - NET PROFIT AFTER TAX: Map "Net Profit" (صافي ربح العام).
-
-2. BALANCE SHEET - ASSETS:
-   - CASH: Map "Cash and Bank Balances" (النقدية و ما في حكمها).
-   - MARKETABLE SECURITIES: Map "Letters of Guarantee" (خطابات ضمان).
-   - ACCOUNTS RECEIVABLE: Map "Clients/Trade Receivables" (العملاء).
-   - INVENTORY: Map "Total Inventory" (مخزون أخر المدة).
-   - PROPERTY, PLANT & EQUIP BREAKDOWN:
-     - LAND: Map "Land" (أراضي).
-     - BUILDING & IMPROVEMENT: Map "Buildings" (مباني) + "Furniture/Fixtures" (أثاث و تجهيزات).
-     - MACHINERY & EQUIPMENT: Map "Machinery" (آلات ومعدات) + "Right of Use Assets" (أصول بحق الانتفاع) + "Computers" (أجهزة كمبيوتر).
-   - GROSS PLANT: Sum of all PPE items before depreciation. MUST include "Right of Use Assets".
-   - LESS ACCUMULATED DEP: Map "Accumulated Depreciation" (مجمع الإهلاك).
-   - NET PP&E: Map "Net Fixed Assets" (صافي الأصول الثابتة). MUST match Gross Plant - Accumulated Dep.
-
-3. BALANCE SHEET - LIABILITIES & EQUITY:
-   - SHORT TERM BORROWING--EXISTING: Map "Bank Credit Balances" (بنوك أرصدة دائنة).
-   - CP SENIOR DEBT--EXISTING: Map "Current Loan Installments" (أقساط قروض متداولة).
-   - CP CAP LEASE: Map "Current Lease Installments" (أقساط تأجير تمويلي متداولة).
-   - ACCOUNTS PAYABLE: Map "Suppliers" (الموردون).
-   - ACCRUED EXPENSES: Map "Accrued Expenses" (مصروفات مستحقه).
-   - LT LEASE OBLIGATION: Map "Long Term Lease Installments" (أقساط تأجير تمويلي طويلة الاجل).
-   - LT SENIOR DEBT--EXISTING: Map "Long Term Loan Installments" (أقساط قروض طويلة الاجل).
-   - OWNERS ACCOUNT: Map "Partners Current" (جاري الشركاء).
-   - COMMON STOCK: Map "Capital" (رأس المال).
-   - RETAINED EARNINGS OPENING: Map "Retained Earnings" from the previous year.
-
-GENERAL:
-- Parentheses (1,234) mean negative.
-- Convert Arabic numerals to English digits.
-- Extract numbers EXACTLY as shown.
-- Detect Fiscal Year.
-
-CONSISTENCY (MANDATORY):
-- Total Assets = Total Liabilities + Total Equity.
-- Gross Profit = Revenues - COGS - Depreciation1.
-- Net Profit After Tax must match the document.
-
-Return ONLY a valid JSON object.
-`;
-
 export async function extractFinancialData(file: File, highPrecision = false): Promise<FinancialData> {
-  const apiKey = (import.meta as any).env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : null);
-  
-  if (!apiKey) {
-    throw new Error("Gemini API Key is missing. If you are using Vercel, make sure to add VITE_GEMINI_API_KEY to Environment Variables and REDEPLOY your app.");
-  }
+  const { base64Data, mimeType } = await prepareFileForUpload(file);
 
-  const base64Data = await fileToBase64(file);
-  const mimeType = file.type;
+  const maxAttempts = 3;
+  let lastError: any = null;
 
-  const prompt = SYSTEM_PROMPT;
-
-  const executeExtraction = async (retryCount = 0): Promise<FinancialData> => {
-    const ai = new GoogleGenAI({ apiKey });
-    const modelName = "gemini-3-flash-preview";
-    
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const response: GenerateContentResponse = await ai.models.generateContent({
-        model: modelName,
-        contents: [
-          {
-            parts: [
-              { text: prompt },
-              {
-                inlineData: {
-                  data: base64Data.split(",")[1],
-                  mimeType: mimeType,
-                },
-              },
-            ],
-          },
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: FINANCIAL_DATA_SCHEMA,
-          temperature: 0.1,
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
-        }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minutes timeout
+
+      const response = await fetch('/api/extract', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          base64Data,
+          mimeType,
+          highPrecision,
+        }),
+        signal: controller.signal,
       });
 
-      const text = response.text || "{}";
-      const rawData = JSON.parse(text);
-      return sanitizeFinancialData(rawData);
-    } catch (error: any) {
-      const errorString = JSON.stringify(error);
-      console.error(`Gemini Extraction Error:`, errorString);
-      
-      const isQuotaError = errorString.includes("429") || errorString.includes("RESOURCE_EXHAUSTED");
+      clearTimeout(timeoutId);
 
-      if (isQuotaError && retryCount < 1) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        return executeExtraction(retryCount + 1);
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        const serverError = errData.error || `Server extraction failed with status ${response.status}`;
+        
+        // Transient server statuses (500, 502, 503, 504) can be retried
+        if (response.status >= 500 && response.status <= 504 && attempt < maxAttempts) {
+          console.warn(`Extraction attempt ${attempt} returned status ${response.status}, retrying in ${attempt * 1500}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+          continue;
+        }
+        throw new Error(serverError);
       }
 
-      throw new Error(error?.message || "Extraction failed");
-    }
-  };
+      const result = await response.json();
+      if (!result.success || !result.data) {
+        throw new Error(result.error || "Failed to extract structured data from statement.");
+      }
 
-  return executeExtraction();
+      return sanitizeFinancialData(result.data);
+    } catch (error: any) {
+      lastError = error;
+      const isAbort = error?.name === 'AbortError';
+      const isNetwork = error?.message?.includes('Failed to fetch') || error?.name === 'TypeError';
+
+      console.warn(`Extraction attempt ${attempt} error:`, error?.message || error);
+
+      if ((isNetwork || isAbort) && attempt < maxAttempts) {
+        console.warn(`Temporary network issue on attempt ${attempt}, retrying in ${attempt * 2000}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+        continue;
+      }
+      break;
+    }
+  }
+
+  console.error("Extraction error:", lastError);
+  let friendlyMessage = lastError?.message || "Extraction failed";
+  if (friendlyMessage.includes("Failed to fetch") || lastError?.name === 'AbortError') {
+    friendlyMessage = "تعذر الاتصال بالخادم مؤقتاً أثناء تحليل المستند. يرجى الضغط على زر إعادة المحاولة (Re-extract).";
+  }
+  throw new Error(friendlyMessage);
 }
 
 // Keep for compatibility but use parallel single extractions for better speed
@@ -517,6 +320,62 @@ function sanitizeFinancialData(data: any): FinancialData {
     },
     notes: data.notes || {},
   };
+}
+
+async function prepareFileForUpload(file: File): Promise<{ base64Data: string; mimeType: string }> {
+  // If image, downscale if needed (smart compression for high-res camera photos or scans)
+  if (file.type.startsWith('image/')) {
+    try {
+      const compressed = await compressImageFile(file);
+      return {
+        base64Data: compressed,
+        mimeType: 'image/jpeg',
+      };
+    } catch (e) {
+      console.warn("Image compression failed, using original file:", e);
+    }
+  }
+
+  const base64Data = await fileToBase64(file);
+  const mimeType = file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+  return { base64Data, mimeType };
+}
+
+function compressImageFile(file: File, maxDim = 2048, quality = 0.88): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          return resolve(event.target?.result as string);
+        }
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(dataUrl);
+      };
+      img.onerror = () => reject(new Error('Failed to load image for optimization'));
+    };
+    reader.onerror = (err) => reject(err);
+  });
 }
 
 function fileToBase64(file: File): Promise<string> {

@@ -35,3 +35,51 @@
   background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.05) 50%, transparent 75%);
   background-size: 200% 100%;
 }
+
+/* ========================================================================== */
+/* Single-Page Executive Dashboard Print Styling                              */
+/* ========================================================================== */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 4mm 6mm;
+  }
+
+  *, *::before, *::after {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  html, body, #root {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide interactive elements, copilot, alerts, headers during print */
+  .print\:hidden,
+  button,
+  nav,
+  header,
+  #dashboard-ai-copilot,
+  [data-copilot-panel="true"] {
+    display: none !important;
+  }
+
+  /* Single Page Fit container */
+  .print-single-page-root {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    height: 100% !important;
+    max-height: 100vh !important;
+    overflow: hidden !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}

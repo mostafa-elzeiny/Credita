@@ -1,5 +1,6 @@
 {
   "name": "Credita",
   "description": "Professional Financial Spreading Tool for bank-grade financial statement extraction and analysis.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
