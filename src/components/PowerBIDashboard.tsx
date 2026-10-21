@@ -372,13 +372,20 @@ export default function PowerBIDashboard({
           excelBase64: bundleResult.xlsxBase64
         })
       });
-      const resData = await res.json();
-      if (resData.success && resData.reportUrl) {
+      let resData: any = null;
+      try {
+        const text = await res.text();
+        resData = JSON.parse(text);
+      } catch (_) {
+        throw new Error('Non-JSON response received from server');
+      }
+
+      if (resData?.success && resData?.reportUrl) {
         setWebReportUrl(resData.reportUrl);
         setExcelWebUrl(resData.excelWebUrl || null);
         setShowWebModal(true);
       } else {
-        throw new Error(resData.error || 'Failed to publish');
+        throw new Error(resData?.error || 'Failed to publish');
       }
     } catch (e) {
       console.warn('Publish web report error:', e);

@@ -330,9 +330,12 @@ function FinSpreadApp() {
     const idleFiles = uploadedFiles.filter(f => f.status === 'idle');
     const results: { fileId: string; success: boolean; data?: FinancialData; year?: string }[] = [];
     
-    const extractionPromises = idleFiles.map(async (file, index) => {
-      // Stagger slightly to avoid burst rate limits
-      await new Promise(resolve => setTimeout(resolve, index * 1000));
+    for (let index = 0; index < idleFiles.length; index++) {
+      const file = idleFiles[index];
+      if (index > 0) {
+        // Breather between files to avoid triggering Gemini 503 high demand / rate limits
+        await new Promise(resolve => setTimeout(resolve, 1200));
+      }
       
       setUploadedFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'extracting', error: undefined } : f));
       
@@ -357,9 +360,8 @@ function FinSpreadApp() {
         } : f));
         results.push({ fileId: file.id, success: false });
       }
-    });
+    }
 
-    await Promise.all(extractionPromises);
     clearInterval(interval);
     setIsProcessing(false);
 
@@ -527,6 +529,22 @@ function FinSpreadApp() {
       
       return { ...f, data: recalculateFinancials(newData) };
     }));
+  };
+
+  const handleDashboardDataChange = (updated: FinancialData[]) => {
+    setUploadedFiles(prev => {
+      return prev.map(f => {
+        if (!f.data) return f;
+        const matchingUpdated = updated.find(u => u.year === f.data?.year);
+        if (matchingUpdated) {
+          return {
+            ...f,
+            data: recalculateFinancials(matchingUpdated)
+          };
+        }
+        return f;
+      });
+    });
   };
 
   const downloadExcel = () => {
@@ -1458,6 +1476,7 @@ function FinSpreadApp() {
                     onBack={() => setShowWebDashboard(false)} 
                     isDark={darkMode}
                     initialCompactMode={dashboardCompact}
+                    onDataChange={handleDashboardDataChange}
                   />
                 </div>
               )}

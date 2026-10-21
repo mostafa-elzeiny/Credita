@@ -121,7 +121,7 @@ export interface FinancialData {
 export async function extractFinancialData(file: File, highPrecision = false): Promise<FinancialData> {
   const { base64Data, mimeType } = await prepareFileForUpload(file);
 
-  const maxAttempts = 3;
+  const maxAttempts = 4;
   let lastError: any = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -144,22 +144,64 @@ export async function extractFinancialData(file: File, highPrecision = false): P
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        const serverError = errData.error || `Server extraction failed with status ${response.status}`;
+      // Read response as text first to safely guard against HTML error pages or non-JSON responses
+      const rawText = await response.text();
+      let result: any = null;
+      try {
+        result = JSON.parse(rawText);
+      } catch (parseErr) {
+        console.warn(`Extraction attempt ${attempt} received non-JSON payload (${response.status}):`, rawText.slice(0, 200));
         
-        // Transient server statuses (500, 502, 503, 504) can be retried
-        if (response.status >= 500 && response.status <= 504 && attempt < maxAttempts) {
-          console.warn(`Extraction attempt ${attempt} returned status ${response.status}, retrying in ${attempt * 1500}ms...`);
-          await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+        const isHtml = rawText.trim().startsWith('<') || rawText.toLowerCase().includes('<!doctype');
+        const isTransientStatus = response.status >= 500 && response.status <= 504;
+
+        if ((isHtml || isTransientStatus) && attempt < maxAttempts) {
+          const waitTime = attempt * 2500;
+          console.warn(`Transient HTML/Gateway response on attempt ${attempt}, retrying in ${waitTime}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+          continue;
+        }
+
+        throw new Error(
+          isHtml
+            ? "الخادم يواجه ضغطاً مؤقتاً أو قيد التحديث. يرجى الضغط على زر 'إعادة المحاولة / Retry'."
+            : `استجابة غير متوقعة من الخادم (Status ${response.status}). يرجى إعادة المحاولة.`
+        );
+      }
+
+      if (!response.ok) {
+        let serverError = result?.error || `Server extraction failed with status ${response.status}`;
+        
+        // Clean up if serverError is a raw JSON string
+        try {
+          if (typeof serverError === 'string' && serverError.startsWith('{')) {
+            const parsed = JSON.parse(serverError);
+            if (parsed?.error?.message) {
+              serverError = parsed.error.message;
+            }
+          }
+        } catch (_) {}
+
+        const isTransient = 
+          (response.status >= 500 && response.status <= 504) || 
+          serverError.includes("503") || 
+          serverError.includes("high demand") || 
+          serverError.includes("Spikes in demand") || 
+          serverError.includes("UNAVAILABLE") ||
+          serverError.includes("overloaded");
+
+        // Transient server statuses or model spikes can be retried
+        if (isTransient && attempt < maxAttempts) {
+          const waitTime = attempt * 2500;
+          console.warn(`Extraction attempt ${attempt} returned transient issue (${response.status}), retrying in ${waitTime}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
           continue;
         }
         throw new Error(serverError);
       }
 
-      const result = await response.json();
-      if (!result.success || !result.data) {
-        throw new Error(result.error || "Failed to extract structured data from statement.");
+      if (!result?.success || !result?.data) {
+        throw new Error(result?.error || "Failed to extract structured data from statement.");
       }
 
       return sanitizeFinancialData(result.data);
@@ -183,6 +225,13 @@ export async function extractFinancialData(file: File, highPrecision = false): P
   let friendlyMessage = lastError?.message || "Extraction failed";
   if (friendlyMessage.includes("Failed to fetch") || lastError?.name === 'AbortError') {
     friendlyMessage = "تعذر الاتصال بالخادم مؤقتاً أثناء تحليل المستند. يرجى الضغط على زر إعادة المحاولة (Re-extract).";
+  } else if (
+    friendlyMessage.includes("503") || 
+    friendlyMessage.includes("high demand") || 
+    friendlyMessage.includes("Spikes in demand") || 
+    friendlyMessage.includes("UNAVAILABLE")
+  ) {
+    friendlyMessage = "نموذج الذكاء الاصطناعي يواجه ضغطاً مؤقتاً في الطلبات (AI Model High Demand). يرجى الضغط على زر إعادة المحاولة (Retry) للمتابعة.";
   }
   throw new Error(friendlyMessage);
 }

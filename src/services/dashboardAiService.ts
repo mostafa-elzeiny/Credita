@@ -98,12 +98,17 @@ export async function askDashboardAI(
     }),
   });
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || `AI analysis failed with status ${response.status}`);
+  const rawText = await response.text();
+  let data: any = null;
+  try {
+    data = JSON.parse(rawText);
+  } catch (_) {
+    throw new Error(`AI assistant temporary error (status ${response.status}). Please try again.`);
   }
 
-  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error || `AI assistant request failed (${response.status})`);
+  }
   if (data.chart) {
     data.chart.id = `chart_ai_${Date.now()}`;
     data.chart.isAiGenerated = true;

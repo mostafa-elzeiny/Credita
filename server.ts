@@ -263,9 +263,9 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Increase payload limit for base64 files up to 50MB
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  // Increase payload limit for base64 files up to 100MB
+  app.use(express.json({ limit: '100mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
   // API routes FIRST
   app.get("/api/health", (req, res) => {
@@ -496,11 +496,12 @@ async function startServer() {
 
       const executeWithRetry = async (retryCount = 0): Promise<any> => {
         const ai = getGenAIClient();
-        // Priority list of fast, accurate multimodal models
+        // Robust multi-model cascade with independent capacity clusters
         const modelsToTry = [
           "gemini-3.8-flash",
-          "gemini-flash-latest",
-          "gemini-3.1-flash-lite"
+          "gemini-3.1-flash-lite",
+          "gemini-3.1-flash-lite",
+          "gemini-3.8-flash"
         ];
         const modelName = modelsToTry[retryCount] || modelsToTry[0];
         try {
@@ -550,6 +551,9 @@ async function startServer() {
             errDetail.includes("503") || 
             errDetail.includes("UNAVAILABLE") || 
             errDetail.includes("overloaded") || 
+            errDetail.includes("high demand") || 
+            errDetail.includes("Spikes in demand") || 
+            errDetail.includes("temporarily unavailable") || 
             errDetail.includes("timeout") ||
             errDetail.includes("500") ||
             errDetail.includes("502") ||
@@ -558,8 +562,9 @@ async function startServer() {
 
           if (isTransient && retryCount < modelsToTry.length - 1) {
             const nextModel = modelsToTry[retryCount + 1];
-            console.warn(`Retrying extraction with ${nextModel}...`);
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            const backoffMs = (retryCount + 1) * 1500 + Math.floor(Math.random() * 500);
+            console.warn(`Transient capacity issue on ${modelName}. Switching/retrying with ${nextModel} in ${backoffMs}ms...`);
+            await new Promise((resolve) => setTimeout(resolve, backoffMs));
             return executeWithRetry(retryCount + 1);
           }
           throw err;
@@ -654,11 +659,25 @@ async function startServer() {
       console.error("Server-side Gemini extraction error:", error);
       let errorMessage = error?.message || "Failed to extract financial data";
       try {
-        const parsed = JSON.parse(errorMessage);
+        const parsed = typeof errorMessage === 'string' && errorMessage.startsWith('{') ? JSON.parse(errorMessage) : null;
         if (parsed?.error?.message) {
           errorMessage = parsed.error.message;
         }
       } catch (_) {}
+
+      const isHighDemand = 
+        String(errorMessage).includes("503") || 
+        String(errorMessage).includes("high demand") || 
+        String(errorMessage).includes("Spikes in demand") || 
+        String(errorMessage).includes("UNAVAILABLE") ||
+        String(errorMessage).includes("overloaded");
+
+      if (isHighDemand) {
+        return res.status(503).json({ 
+          error: "النموذج يواجه ضغطاً مؤقتاً في الطلبات (AI Model High Demand). يرجى الضغط على 'إعادة المحاولة / Retry' للمتابعة فوراً." 
+        });
+      }
+
       return res.status(500).json({ error: errorMessage });
     }
   });
@@ -956,6 +975,26 @@ Return STRICTLY valid JSON conforming to:
     }
 
     res.json({ success: true });
+  });
+
+  // Explicit JSON error handler for all /api routes (e.g. payload too large, invalid json, timeouts)
+  app.use("/api", (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("Express API error caught:", err);
+    if (res.headersSent) {
+      return next(err);
+    }
+    const statusCode = err.status || err.statusCode || 500;
+    const isPayloadTooLarge = err.type === "entity.too.large" || err.message?.includes("entity too large");
+    return res.status(statusCode).json({
+      error: isPayloadTooLarge
+        ? "حجم الملف كبير جداً (أكبر من 100MB). يرجى تقليل حجم الملف أو ضغطه قبل الرفع."
+        : (err.message || "An error occurred while processing the API request.")
+    });
+  });
+
+  // Explicit 404 for ANY unmatched /api/* route - NEVER let /api fall through to Vite SPA index.html!
+  app.all("/api/*", (req, res) => {
+    return res.status(404).json({ error: `API endpoint ${req.method} ${req.originalUrl} not found` });
   });
 
   // Vite middleware for development
