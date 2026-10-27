@@ -39,9 +39,11 @@ import { generatePowerBiExcelWorkbook } from './services/powerBiGenerator';
 import PowerBIDashboard from './components/PowerBIDashboard';
 import DashboardAICopilot from './components/DashboardAICopilot';
 import { exportDashboardToPdf } from './services/pdfExportService';
-import { auth, db } from './firebase';
+import { auth, db, googleProvider } from './firebase';
 import { 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider, 
   onAuthStateChanged, 
   signOut, 
@@ -215,19 +217,89 @@ function FinSpreadApp() {
     return sortedFiles.map(f => f.data!);
   }, [sortedFiles]);
 
-  const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error: any) {
-      console.error('Login failed:', error);
-      // If it's a domain error, we can't easily show it in AuthScreen without passing state
-      // But we can at least alert for now or improve the AuthScreen to handle it
-      if (error.code === 'auth/unauthorized-domain') {
-        alert("This domain is not authorized in Firebase. Please add the app URL to 'Authorized domains' in Firebase Console.");
-      } else {
-        alert("Login failed: " + (error.message || "Unknown error"));
+  const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
+  const [isGoogleSigningIn, setIsGoogleSigningIn] = useState(false);
+
+  // Check for redirect result from Google sign-in (especially on mobile browsers)
+  useEffect(() => {
+    let isMounted = true;
+    getRedirectResult(auth)
+      .then((result) => {
+        if (!isMounted) return;
+        if (result?.user) {
+          setUser(result.user);
+        }
+      })
+      .catch((error: any) => {
+        if (!isMounted) return;
+        console.error("Redirect sign-in error:", error);
+        if (error.code === 'auth/unauthorized-domain') {
+          const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+          setGoogleAuthError(`This domain (${currentHost}) is not authorized in Firebase. Add it to Firebase Console > Authentication > Settings > Authorized domains.`);
+        } else if (error.code !== 'auth/popup-closed-by-user') {
+          setGoogleAuthError(error.message || "Failed to complete Google Sign-In.");
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsAuthLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleLogin = async (preferredMode?: 'popup' | 'redirect') => {
+    setIsGoogleSigningIn(true);
+    setGoogleAuthError(null);
+
+    const isMobile = typeof navigator !== 'undefined' && (
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      (typeof window !== 'undefined' && window.innerWidth <= 768 && 'ontouchstart' in window)
+    );
+    const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
+
+    // On standalone mobile, signInWithRedirect is the standard best practice
+    const shouldUseRedirect = preferredMode === 'redirect' || (isMobile && !isInIframe && preferredMode !== 'popup');
+
+    if (shouldUseRedirect) {
+      try {
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      } catch (redirectError: any) {
+        console.warn("signInWithRedirect failed, attempting popup fallback:", redirectError);
+        // Fall through to try popup if redirect threw an error
       }
+    }
+
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error: any) {
+      console.error('Google Sign-In failed:', error);
+      if (error.code === 'auth/popup-blocked') {
+        if (!isInIframe) {
+          // If popup is blocked on mobile, seamlessly try redirect
+          try {
+            await signInWithRedirect(auth, googleProvider);
+            return;
+          } catch (rErr: any) {
+            setGoogleAuthError("Pop-up blocked. Tap below to use direct redirect sign-in.");
+          }
+        } else {
+          setGoogleAuthError("Mobile browser blocked the sign-in pop-up. Please allow pop-ups for this site or open in a new tab.");
+        }
+      } else if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+        console.info('Sign-in cancelled or window closed');
+      } else if (error.code === 'auth/unauthorized-domain') {
+        const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+        setGoogleAuthError(`This domain (${currentHost}) is not authorized in Firebase Console > Authentication > Settings > Authorized domains.`);
+      } else {
+        setGoogleAuthError(error.message || "Google Sign-In failed. Please try again or use email sign-in.");
+      }
+    } finally {
+      setIsGoogleSigningIn(false);
     }
   };
 
@@ -882,10 +954,28 @@ function FinSpreadApp() {
 
   return (
     <AnimatePresence mode="wait">
-      {!user || needsVerification ? (
+      {isAuthLoading ? (
+        <div key="loading" className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+          <div className="flex flex-col items-center gap-4">
+            <img 
+              src="https://lh3.googleusercontent.com/d/11M23dOt1x49ZRANgrZyhvY0sWL0Y7EQB" 
+              alt="Credita Logo" 
+              className="h-28 w-auto object-contain animate-pulse"
+              referrerPolicy="no-referrer"
+            />
+            <div className="flex items-center gap-2.5 text-slate-600 font-semibold text-sm">
+              <Loader2 className="w-5 h-5 animate-spin text-credita" />
+              <span>Verifying authentication...</span>
+            </div>
+          </div>
+        </div>
+      ) : !user || needsVerification ? (
         <AuthScreen 
           key="auth"
           onLogin={handleLogin} 
+          isGoogleSigningIn={isGoogleSigningIn}
+          googleAuthError={googleAuthError}
+          onClearGoogleAuthError={() => setGoogleAuthError(null)}
           user={user} 
           needsVerification={needsVerification} 
         />
@@ -1034,7 +1124,7 @@ function FinSpreadApp() {
               </div>
             ) : (
               <button 
-                onClick={handleLogin}
+                onClick={() => handleLogin()}
                 className="flex items-center gap-2 bg-credita text-white px-4 py-2 rounded-xl font-semibold hover:opacity-90 transition-all shadow-sm"
               >
                 <LogIn className="w-4 h-4" />
@@ -2709,13 +2799,25 @@ const TableRow = memo(function TableRow({
 
 function AuthScreen({ 
   onLogin, 
+  isGoogleSigningIn = false,
+  googleAuthError = null,
+  onClearGoogleAuthError,
   user, 
   needsVerification 
 }: { 
-  onLogin: () => void; 
+  onLogin: (mode?: 'popup' | 'redirect') => void; 
+  isGoogleSigningIn?: boolean;
+  googleAuthError?: string | null;
+  onClearGoogleAuthError?: () => void;
   user: User | null;
   needsVerification?: boolean;
 }) {
+  const isMobile = typeof navigator !== 'undefined' && (
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    (typeof window !== 'undefined' && window.innerWidth <= 768 && 'ontouchstart' in window)
+  );
+  const isInAppBrowser = typeof navigator !== 'undefined' && /FBAN|FBAV|Instagram|WhatsApp|Line|ByteDance|TikTok/i.test(navigator.userAgent);
+
   const [isSignup, setIsSignup] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [email, setEmail] = useState('');
@@ -3021,13 +3123,82 @@ function AuthScreen({
             </div>
           </div>
 
+          {isInAppBrowser && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2 text-left">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                <span className="font-bold">Mobile Browser Note:</span> Inside in-app browsers (WhatsApp/Instagram), Google blocks sign-in. Tap <span className="font-bold">⋮ / ⋯</span> and choose <span className="font-bold">"Open in Safari / Chrome"</span> for instant Google Sign-In.
+              </p>
+            </div>
+          )}
+
           <button 
-            onClick={onLogin}
-            className="w-full bg-white border border-slate-200 text-slate-700 py-4 rounded-2xl font-bold hover:bg-slate-50 active:scale-[0.98] transition-all flex items-center justify-center gap-3 shadow-sm group"
+            type="button"
+            disabled={isGoogleSigningIn || isLoading}
+            onClick={() => onLogin()}
+            className="w-full bg-white border border-slate-200 text-slate-700 py-4 rounded-2xl font-bold hover:bg-slate-50 active:scale-[0.98] transition-all flex items-center justify-center gap-3 shadow-sm group disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <img src="https://www.google.com/favicon.ico" alt="" className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            <span>Continue with Google</span>
+            {isGoogleSigningIn ? (
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin text-credita" />
+                <span>Connecting with Google...</span>
+              </div>
+            ) : (
+              <>
+                <img src="https://www.google.com/favicon.ico" alt="" className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                <span>Continue with Google</span>
+              </>
+            )}
           </button>
+
+          {googleAuthError && (
+            <motion.div 
+              initial={{ opacity: 0, y: 5 }} 
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-3 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 text-left"
+            >
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1.5 flex-1">
+                  <p className="font-semibold leading-relaxed">{googleAuthError}</p>
+                  <div className="flex flex-wrap items-center gap-2 pt-1 font-bold">
+                    <button
+                      type="button"
+                      onClick={() => onLogin('redirect')}
+                      className="text-credita underline hover:opacity-85"
+                    >
+                      Use Direct Mobile Sign-In (Redirect)
+                    </button>
+                    <span className="text-slate-300">•</span>
+                    <button
+                      type="button"
+                      onClick={() => onLogin('popup')}
+                      className="text-slate-600 underline hover:opacity-85"
+                    >
+                      Retry Pop-Up
+                    </button>
+                  </div>
+                </div>
+                {onClearGoogleAuthError && (
+                  <button type="button" onClick={onClearGoogleAuthError} className="text-amber-500 hover:text-amber-800 p-0.5">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {isMobile && !googleAuthError && !isGoogleSigningIn && (
+            <div className="mt-2.5 text-center">
+              <button 
+                type="button" 
+                onClick={() => onLogin('redirect')} 
+                className="text-[11px] text-slate-500 hover:text-credita underline decoration-dotted font-medium transition-colors"
+              >
+                Having trouble with pop-ups on mobile? Tap here for Direct Redirect
+              </button>
+            </div>
+          )}
 
           <div className="mt-8 text-center">
             <button 
