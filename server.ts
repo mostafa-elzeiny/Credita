@@ -1,9 +1,8 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { customizePbixWithFinancialData } from "./src/services/pbixCustomizer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -13,9 +12,9 @@ const __dirname = path.dirname(__filename);
 let aiClient: GoogleGenAI | null = null;
 function getGenAIClient(): GoogleGenAI {
   if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || process.env.API_KEY;
     if (!apiKey) {
-      throw new Error("GEMINI_API_KEY environment variable is not configured on the server.");
+      throw new Error("GEMINI_API_KEY environment variable is not configured on the server. Please add GEMINI_API_KEY to your Vercel or deployment Environment Variables.");
     }
     aiClient = new GoogleGenAI({
       apiKey,
@@ -267,13 +266,23 @@ CRITICAL MAPPING & EXTRACTION RULES:
    - Return clean, strictly valid JSON conforming to the schema.
 `;
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+export const app = express();
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
-  // Increase payload limit for base64 files up to 100MB
-  app.use(express.json({ limit: '100mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+// Enable CORS and preflight for all origins (supports Vercel, mobile, preview, custom domains)
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Increase payload limit for base64 files up to 100MB
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
   // API routes FIRST
   app.get("/api/health", (req, res) => {
@@ -1227,9 +1236,11 @@ Return STRICTLY valid JSON conforming to:
     return res.status(404).json({ error: `API endpoint ${req.method} ${req.originalUrl} not found` });
   });
 
+async function startStandaloneServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     console.log("Running in development mode");
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -1262,14 +1273,20 @@ Return STRICTLY valid JSON conforming to:
   }
 
   const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
 
   // Ensure Node HTTP server doesn't prematurely drop long AI extraction requests
   server.setTimeout(300000); // 5 minutes
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;
+  return server;
 }
 
-startServer();
+// Only launch standalone listening server when not running inside a Serverless Function (e.g. Vercel)
+if (!process.env.VERCEL) {
+  startStandaloneServer().catch(console.error);
+}
+
+export default app;
 

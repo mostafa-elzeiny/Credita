@@ -165,10 +165,13 @@ export async function extractFinancialData(file: File, highPrecision = false): P
           continue;
         }
 
+        const isVercelHost = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
         throw new Error(
           isHtml
             ? "الخادم قيد التحديث أو يواجه ضغطاً مؤقتاً. يرجى الضغط على زر 'إعادة المحاولة / Retry'."
-            : `استجابة غير متوقعة من الخادم (Status ${response.status}). جاري إعادة الاتصال...`
+            : isVercelHost && response.status === 404
+            ? "مسار الخادم غير مفعل على Vercel (Status 404). يرجى التأكد من رفع ملفات vercel.json و api/ المحدثة وإضافة متغير GEMINI_API_KEY في إعدادات المشروع على Vercel."
+            : `استجابة غير متوقعة من الخادم (Status ${response.status}). يرجى إعادة المحاولة.`
         );
       }
 
