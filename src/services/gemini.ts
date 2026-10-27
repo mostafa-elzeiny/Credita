@@ -229,6 +229,18 @@ export async function extractFinancialData(file: File, highPrecision = false): P
     }
   }
 
+  // If server extraction failed (e.g. Vercel serverless 404/500 issue), seamlessly attempt direct client-side extraction!
+  try {
+    const apiKey = (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || (import.meta as any).env?.VITE_GEMINI_API_KEY;
+    if (apiKey) {
+      console.info("Server API unavailable, executing seamless direct Gemini extraction...");
+      return await extractClientSide(base64Data, mimeType, highPrecision);
+    }
+  } catch (clientErr: any) {
+    console.warn("Client fallback extraction error:", clientErr);
+    lastError = clientErr;
+  }
+
   console.error("Extraction error:", lastError);
   let friendlyMessage = lastError?.message || "Extraction failed";
   if (friendlyMessage.includes("Failed to fetch") || lastError?.name === 'AbortError') {
@@ -242,6 +254,66 @@ export async function extractFinancialData(file: File, highPrecision = false): P
     friendlyMessage = "نموذج الذكاء الاصطناعي يواجه ضغطاً مؤقتاً في الطلبات (AI Model High Demand). يرجى الضغط على زر إعادة المحاولة (Retry) للمتابعة.";
   }
   throw new Error(friendlyMessage);
+}
+
+async function extractClientSide(base64Data: string, mimeType: string, highPrecision = false): Promise<FinancialData> {
+  const apiKey = (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || (import.meta as any).env?.VITE_GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing GEMINI_API_KEY");
+  }
+
+  const { GoogleGenAI } = await import('@google/genai');
+  const { FINANCIAL_DATA_SCHEMA, SYSTEM_PROMPT, reconcileFinancialData } = await import('./extractionPrompt.ts');
+
+  const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+  const cleanMimeType = mimeType || 'application/pdf';
+
+  const ai = new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: { 'User-Agent': 'aistudio-build' },
+    },
+  });
+
+  const models = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+  let lastErr: any = null;
+
+  for (const model of models) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [
+          {
+            parts: [
+              { text: SYSTEM_PROMPT },
+              {
+                inlineData: {
+                  data: cleanBase64,
+                  mimeType: cleanMimeType,
+                },
+              },
+            ],
+          },
+        ],
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: FINANCIAL_DATA_SCHEMA,
+          temperature: highPrecision ? 0.0 : 0.05,
+        },
+      });
+
+      const text = response.text || '{}';
+      const parsed = JSON.parse(text);
+      if (parsed) {
+        return sanitizeFinancialData(reconcileFinancialData(parsed));
+      }
+    } catch (e: any) {
+      lastErr = e;
+      console.warn(`Direct model ${model} failed:`, e?.message || e);
+    }
+  }
+
+  throw lastErr || new Error("Direct extraction failed");
 }
 
 // Keep for compatibility but use parallel single extractions for better speed
