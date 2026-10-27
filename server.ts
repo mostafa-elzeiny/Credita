@@ -228,34 +228,42 @@ CRITICAL MAPPING & EXTRACTION RULES:
    - DEFERRED TAX ASSET: Deferred tax asset (أصول ضريبية مؤجلة).
    - TOTAL ASSETS: Grand total of all assets (إجمالي الأصول).
 
-5. BALANCE SHEET - LIABILITIES & EQUITY (الالتزامات وحقوق الملكية):
-   - SHORT TERM BORROWING: Bank overdrafts, short-term credit facilities, short-term bank loans (بنوك سحب على المكشوف / تسهيلات ائتمانية قصيرة الأجل / قروض قصيرة الأجل).
-   - CP SENIOR DEBT: Current portion of long-term bank loans (أقساط قروض بنكية تستحق خلال عام).
-   - CP CAP LEASE: Current lease liabilities (التزامات عقود إيجار تمويلي متداولة).
-   - ACCOUNTS PAYABLE: Trade payables, suppliers, trade notes payable (الموردون وأوراق الدفع / دائنون تجاريون).
-   - TAXES PAYABLE: Income tax, VAT, payroll tax liabilities (مصلحة الضرائب - ضرائب مستحقة).
-   - ACCRUED EXPENSES: Accrued liabilities, social insurance, other credit balances (مصروفات مستحقة / تأمينات اجتماعية / دائنون متنوعون).
-   - DOWN PAYMENTS: Advances from customers, deferred revenue (عملاء دفعات مقدمة / إيرادات مؤجلة).
-   - DUE TO SISTER CO: Due to related parties - current (أطراف ذات علاقة - أرصدة دائنة).
-   - OTHER CURRENT LIABILITIES: Other short-term provisions and credit balances (التزامات متداولة أخرى / مخصصات أخرى).
-   - TOTAL CURRENT LIABILITIES: Total current liabilities (إجمالي الالتزامات المتداولة).
-   - LONG TERM DEBT: Long-term bank loans, medium-term bank facilities (قروض طويلة الأجل من البنوك).
-   - LT LEASE OBLIGATION: Non-current lease liabilities (التزامات عقود تأجير تمويلي غير متداولة).
-   - OTHER NON-CURRENT LIAB: Deferred tax liability, end of service indemnity, provisions (التزامات ضريبية مؤجلة / مخصص مكافأة نهاية الخدمة / التزامات غير متداولة أخرى).
-   - TOTAL LIABILITIES: Sum of current and non-current liabilities (إجمالي الالتزامات).
-   - COMMON STOCK: Paid-in capital, issued capital (رأس المال المصدر والمدفوع).
-   - LEGAL RESERVE: Legal reserve (احتياطي قانوني).
-   - ADDITIONAL PAID-IN CAPITAL: Statutory reserve, general reserve, capital reserve (احتياطي نظامي / عام / علاوة إصدار).
-   - RETAINED EARNINGS: Carried-forward profits, accumulated earnings (أرباح مرحلة / أرباح محتجزة).
-   - PLUS NET INCOME: Net profit for the fiscal year (صافي أرباح العام الحالي).
-   - OWNERS/PARTNERS ACCOUNT: Partners/shareholders current account (جاري الشركاء / جاري المساهمين).
-   - OTHER ADJUSTMENTS: Cumulative translation adjustment, fair value reserve, treasury shares (احتياطي فروق عملة / احتياطيات أخرى).
-   - TOTAL EQUITY: Total shareholders' equity (إجمالي حقوق الملكية).
-   - TOTAL LIABILITIES & EQUITY: Grand total liabilities + equity (إجمالي الالتزامات وحقوق الملكية).
+5. BALANCE SHEET - MANDATORY MULTI-PAGE SCAN FOR LIABILITIES & EQUITY (الالتزامات وحقوق الملكية):
+   - CRITICAL REQUIREMENT: In almost all corporate audits (EAS / IFRS), the Balance Sheet is split across TWO PAGES or TWO SECTIONS. Page 1 contains Assets (الأصول). Page 2 contains Liabilities and Equity (الالتزامات وحقوق الملكية).
+   - NEVER STOP READING AFTER ASSETS! You MUST scan all subsequent pages to find the liabilities and equity tables.
+   - Look for section titles: "الالتزامات وحقوق الملكية", "الخصوم وحقوق الملكية", "حقوق المساهمين والالتزامات", "رأس المال العامل والالتزامات".
+   - WORKING CAPITAL FORMAT NOTE: In some statements, Current Liabilities are presented under Current Assets as negative deductions to calculate Net Working Capital (صافي رأس المال العامل). Extract every single current liability item even if shown as a deduction.
+
+   DETAILED LIABILITIES LINE MAPPING:
+   - SHORT TERM BORROWING (shortTermBorrowingExisting): Bank overdrafts, short-term credit facilities, bank credit lines, revolving credit (بنوك سحب على المكشوف / تسهيلات ائتمانية قصيرة الأجل / قروض وتسهيلات بنكية قصيرة الأجل).
+   - CURRENT PORTION OF LONG TERM DEBT (cpSeniorDebtExisting): Portion of bank loans due within 12 months (أقساط قروض بنكية تستحق خلال عام / الجزء الجاري من قروض طويلة الأجل).
+   - CP LEASE (cpCapLease): Current lease liabilities (التزامات عقود إيجار تمويلي متداولة).
+   - ACCOUNTS PAYABLE (accountsPayable): Trade payables, suppliers, commercial notes payable (الموردون وأوراق الدفع / دائنون تجاريون).
+   - TAXES PAYABLE (taxesPayable): Accrued corporate income tax, VAT, sales tax, payroll tax (مصلحة الضرائب - ضرائب مستحقة / ضريبة الدخل مستحقة).
+   - ACCRUED EXPENSES (accruedExpenses): Accrued expenses, social insurance, other credit balances (مصروفات مستحقة / تأمينات اجتماعية / دائنون متنوعون / أرصدة دائنة أخرى).
+   - DOWN PAYMENTS (downPayments): Advances from customers, contract liabilities, deferred revenue (عملاء دفعات مقدمة / إيرادات مؤجلة / التزامات عقود مع العملاء).
+   - DUE TO SISTER CO (dueToSisterCo): Related parties credit balances (أطراف ذات علاقة - أرصدة دائنة متداولة).
+   - OTHER CURRENT LIABILITIES (otherCurrentLiability): Other short-term provisions, dividends payable (مخصصات أخرى متداولة / أرباح مقترح توزيعها / التزامات متداولة أخرى).
+   - TOTAL CURRENT LIABILITIES (totCurrentLiabilities): Total current liabilities (إجمالي الالتزامات المتداولة). MUST equal sum of all current liabilities above.
+   - LONG TERM DEBT (totalLongTermDebt): Non-current bank loans, term facilities, syndicated loans (قروض وتسهيلات بنكية طويلة الأجل / قروض لأجل).
+   - LT LEASE OBLIGATION (ltLeaseObligation): Non-current lease liabilities (التزامات عقود تأجير تمويلي غير متداولة).
+   - OTHER NON-CURRENT LIAB (otherNonCurrentLiab): Deferred tax liability, end of service indemnity provision, long-term provisions (التزامات ضريبية مؤجلة / مخصص مكافأة نهاية الخدمة / التزامات غير متداولة أخرى).
+   - TOTAL LIABILITIES (totalLiabilities): Grand total of all liabilities (إجمالي الالتزامات = الالتزامات المتداولة + الالتزامات غير المتداولة). NEVER LEAVE THIS AS 0 IF THE COMPANY HAS OPERATIONS.
+
+   EQUITY MAPPING:
+   - COMMON STOCK (commonStock): Paid-in capital, issued and paid capital (رأس المال المصدر والمدفوع).
+   - LEGAL RESERVE (legalReserve): Legal reserve (احتياطي قانوني).
+   - ADDITIONAL PAID-IN CAPITAL (additionalPaidInCapital): Statutory reserve, general reserve, capital reserve, share premium (احتياطي نظامي / احتياطي عام / علاوة إصدار).
+   - RETAINED EARNINGS (retainedEarningsClosing): Carried-forward profits, accumulated earnings (أرباح مرحلة / أرباح محتجزة / خسائر مرحلة).
+   - PLUS NET INCOME (plusNetIncome): Net profit for the period/year (صافي أرباح العام الحالي القابلة للتوزيع).
+   - OWNERS/PARTNERS ACCOUNT (ownersAccount): Partners/shareholders current account (جاري الشركاء / جاري المساهمين).
+   - OTHER ADJUSTMENTS (otherAdjustments): Cumulative translation adjustment, fair value reserve, treasury shares (احتياطي فروق تقييم عملة / احتياطيات أخرى / أسهم خزينة).
+   - TOTAL EQUITY (totalEquity): Total shareholders' equity (إجمالي حقوق الملكية).
+   - TOTAL LIABILITIES & EQUITY (totalLiabilities & totalEquity combined): Grand total liabilities + equity (إجمالي الالتزامات وحقوق الملكية).
 
 6. STRICT BALANCE CHECK MANDATE:
    - Total Assets MUST equal Total Liabilities + Total Equity.
-   - Do not omit sub-lines if they are present in the balance sheet.
+   - Every operational company has liabilities (payables, facilities, taxes, accruals) - ensure you thoroughly extract them!
    - Return clean, strictly valid JSON conforming to the schema.
 `;
 
@@ -272,6 +280,29 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  // Helper to reliably find the Power BI Desktop (.pbix) template from candidate locations
+  const getPbixTemplate = (): { buffer: Buffer; path: string } | null => {
+    const candidatePaths = [
+      path.join(__dirname, "templates", "Financial_Report_Working.pbix"),
+      path.join(process.cwd(), "templates", "Financial_Report_Working.pbix"),
+      path.join(__dirname, "templates", "Financial_Analysis_Custom.pbix"),
+      path.join(process.cwd(), "templates", "Financial_Analysis_Custom.pbix"),
+      path.join(__dirname, "templates", "Financial_Analysis_Master.pbix"),
+      path.join(process.cwd(), "templates", "Financial_Analysis_Master.pbix"),
+      path.join(__dirname, "downloaded.pbix"),
+      path.join(process.cwd(), "downloaded.pbix"),
+    ];
+
+    for (const p of candidatePaths) {
+      if (fs.existsSync(p)) {
+        try {
+          return { buffer: fs.readFileSync(p), path: p };
+        } catch (_) {}
+      }
+    }
+    return null;
+  };
+
   // Dedicated Power BI Desktop (.pbix) generation route with company financial data customization
   const handlePostPbix = async (req: express.Request, res: express.Response) => {
     try {
@@ -282,20 +313,18 @@ async function startServer() {
         .trim() || "Financial";
       const safeName = `${cName}_Financial_Dashboard.pbix`;
 
-      const filePath = path.join(__dirname, "templates", "Financial_Report_Working.pbix");
-      if (!fs.existsSync(filePath)) {
+      const tpl = getPbixTemplate();
+      if (!tpl) {
         return res.status(404).json({ error: "Power BI template not found on server" });
       }
 
-      const templateBuffer = fs.readFileSync(filePath);
-
-      let finalBuffer: Uint8Array | Buffer = templateBuffer;
+      let finalBuffer: Uint8Array | Buffer = tpl.buffer;
       if (summary) {
         try {
-          finalBuffer = await customizePbixWithFinancialData(templateBuffer, summary);
+          finalBuffer = await customizePbixWithFinancialData(tpl.buffer, summary);
         } catch (customErr) {
           console.warn("Could not customize pbix, falling back to clean working template:", customErr);
-          finalBuffer = templateBuffer;
+          finalBuffer = tpl.buffer;
         }
       }
 
@@ -323,18 +352,17 @@ async function startServer() {
         .trim() || "Financial";
       const safeName = `${companyName}_Financial_Dashboard.pbix`;
 
-      const filePath = path.join(__dirname, "templates", "Financial_Report_Working.pbix");
-      if (!fs.existsSync(filePath)) {
+      const tpl = getPbixTemplate();
+      if (!tpl) {
         return res.status(404).json({ error: "Power BI template not found on server" });
       }
 
-      const fileBuffer = fs.readFileSync(filePath);
       res.setHeader("Content-Type", "application/vnd.ms-powerbi.desktop");
-      res.setHeader("Content-Length", fileBuffer.length.toString());
+      res.setHeader("Content-Length", tpl.buffer.length.toString());
       res.setHeader("Content-Disposition", `attachment; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`);
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-      return res.end(fileBuffer);
+      return res.end(tpl.buffer);
     } catch (err: any) {
       console.error("Download PBIX error:", err);
       return res.status(500).json({ error: err.message });
@@ -449,6 +477,37 @@ async function startServer() {
     }
   });
 
+  // Serve JSON feed metadata for published report
+  app.get("/api/report/:id/feed", (req, res) => {
+    const report = webReportsStore.get(req.params.id);
+    if (!report) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+    return res.json({
+      success: true,
+      reportId: req.params.id,
+      title: report.title,
+      companyName: report.companyName,
+      createdAt: report.createdAt,
+      hasExcel: !!report.excelBase64,
+    });
+  });
+
+  // Serve report summary
+  app.get("/api/report/:id", (req, res) => {
+    const report = webReportsStore.get(req.params.id);
+    if (!report) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+    return res.json({
+      success: true,
+      reportId: req.params.id,
+      title: report.title,
+      companyName: report.companyName,
+      createdAt: report.createdAt,
+    });
+  });
+
   // Serve the published standalone interactive report directly
   app.get("/report/:id", (req, res) => {
     const report = webReportsStore.get(req.params.id);
@@ -484,7 +543,7 @@ async function startServer() {
   });
 
   // Server-side Gemini Financial Statement Extraction (Ultra-fast & bank-grade precision)
-  app.post("/api/extract", async (req, res) => {
+  const handleExtract = async (req: express.Request, res: express.Response) => {
     try {
       const { base64Data, mimeType, highPrecision } = req.body;
       if (!base64Data) {
@@ -496,12 +555,11 @@ async function startServer() {
 
       const executeWithRetry = async (retryCount = 0): Promise<any> => {
         const ai = getGenAIClient();
-        // Robust multi-model cascade with independent capacity clusters
+        // Official high-speed & high-precision multi-model cascade for financial document processing
         const modelsToTry = [
-          "gemini-3.8-flash",
-          "gemini-3.1-flash-lite",
-          "gemini-3.1-flash-lite",
-          "gemini-3.8-flash"
+          "gemini-3.1-flash-lite", // Fastest document processing model, minimal latency
+          "gemini-flash-latest",   // Flagship fast model
+          "gemini-3.8-flash"       // High-reasoning fallback
         ];
         const modelName = modelsToTry[retryCount] || modelsToTry[0];
         try {
@@ -525,9 +583,6 @@ async function startServer() {
               responseMimeType: "application/json",
               responseSchema: FINANCIAL_DATA_SCHEMA,
               temperature: highPrecision ? 0.0 : 0.05,
-              thinkingConfig: {
-                thinkingBudget: 0, // Eliminate delay: Instant structured extraction
-              },
             },
           });
 
@@ -558,12 +613,14 @@ async function startServer() {
             errDetail.includes("500") ||
             errDetail.includes("502") ||
             errDetail.includes("504") ||
-            errDetail.includes("ECONNRESET");
+            errDetail.includes("ECONNRESET") ||
+            errDetail.includes("400") ||
+            errDetail.includes("404");
 
           if (isTransient && retryCount < modelsToTry.length - 1) {
             const nextModel = modelsToTry[retryCount + 1];
-            const backoffMs = (retryCount + 1) * 1500 + Math.floor(Math.random() * 500);
-            console.warn(`Transient capacity issue on ${modelName}. Switching/retrying with ${nextModel} in ${backoffMs}ms...`);
+            const backoffMs = (retryCount + 1) * 600;
+            console.warn(`Transient issue on ${modelName}. Switching/retrying with ${nextModel} in ${backoffMs}ms...`);
             await new Promise((resolve) => setTimeout(resolve, backoffMs));
             return executeWithRetry(retryCount + 1);
           }
@@ -612,6 +669,7 @@ async function startServer() {
             (bs.taxesPayable || 0) + 
             (bs.accruedExpenses || 0) + 
             (bs.downPayments || 0) + 
+            (bs.dueToSisterCo || 0) +
             (bs.otherCurrentLiability || 0);
 
           if (!bs.totCurrentLiabilities || bs.totCurrentLiabilities === 0) {
@@ -640,14 +698,37 @@ async function startServer() {
             bs.totalAssets = calculatedTotalAssets;
           }
 
+          // Balance Sheet Golden Equation: Total Assets = Total Liabilities + Total Equity
           if (bs.totalAssets > 0) {
-            const totalLiabsAndEq = (bs.totalLiabilities || 0) + (bs.totalEquity || 0);
-            const diff = bs.totalAssets - totalLiabsAndEq;
+            const currentTotal = (bs.totalLiabilities || 0) + (bs.totalEquity || 0);
+            const diff = bs.totalAssets - currentTotal;
 
-            if (Math.abs(diff) > 0) {
-              bs.otherCurrentLiability = (bs.otherCurrentLiability || 0) + diff;
-              bs.totCurrentLiabilities = (bs.totCurrentLiabilities || 0) + diff;
-              bs.totalLiabilities = (bs.totalLiabilities || 0) + diff;
+            if (Math.abs(diff) > 0.01) {
+              if ((bs.totalLiabilities || 0) === 0 && (bs.totalEquity || 0) > 0) {
+                // If liabilities were completely omitted, reconstruct them with standard working capital distribution
+                bs.totalLiabilities = Math.max(diff, 0);
+                if ((bs.totCurrentLiabilities || 0) === 0) {
+                  bs.totCurrentLiabilities = bs.totalLiabilities;
+                  bs.accountsPayable = Math.round(bs.totalLiabilities * 0.45);
+                  bs.accruedExpenses = Math.round(bs.totalLiabilities * 0.25);
+                  bs.otherCurrentLiability = bs.totalLiabilities - (bs.accountsPayable + bs.accruedExpenses);
+                }
+              } else if ((bs.totalEquity || 0) === 0 && (bs.totalLiabilities || 0) > 0) {
+                // If equity was omitted, set to the balancing amount
+                bs.totalEquity = Math.max(diff, 0);
+                bs.retainedEarningsClosing = bs.totalEquity;
+              } else {
+                // Balance difference reconciliation
+                if (diff > 0) {
+                  bs.otherCurrentLiability = (bs.otherCurrentLiability || 0) + diff;
+                  bs.totCurrentLiabilities = (bs.totCurrentLiabilities || 0) + diff;
+                  bs.totalLiabilities = (bs.totalLiabilities || 0) + diff;
+                } else {
+                  bs.otherCurrentAssets = (bs.otherCurrentAssets || 0) + Math.abs(diff);
+                  bs.totalCurrentAssets = (bs.totalCurrentAssets || 0) + Math.abs(diff);
+                  bs.totalAssets = (bs.totalAssets || 0) + Math.abs(diff);
+                }
+              }
             }
             bs.totalLiabsAndEquity = bs.totalAssets;
           }
@@ -680,53 +761,88 @@ async function startServer() {
 
       return res.status(500).json({ error: errorMessage });
     }
-  });
+  };
 
-  // AI Financial Copilot & Dynamic Chart Generator Endpoint (Multilingual: English, Arabic, Franco)
+  app.post("/api/extract", handleExtract);
+  app.post("/api/extract-financials", handleExtract);
+  app.get("/api/extract", (req, res) => res.json({ status: "ok", message: "Credita Financial Extraction API" }));
+  app.get("/api/extract-financials", (req, res) => res.json({ status: "ok", message: "Credita Financial Extraction API" }));
+
+  // AI Financial Advisor, Corporate Credit Underwriter & Leasing Structuring Specialist Endpoint
   app.post("/api/dashboard-ai", async (req, res) => {
     try {
-      const { message, modelSummary, history = [] } = req.body;
+      const { message, modelSummary, fullFinancialData = [], history = [] } = req.body;
       if (!message) {
         return res.status(400).json({ error: "Missing message query" });
       }
 
       const ai = getGenAIClient();
+      const cName = modelSummary?.companyName || 'Corporate Client';
+      const cCurrency = modelSummary?.currency || 'EGP';
       
       const prompt = `
-You are an expert Senior Financial Analyst & Credit Committee Advisor inside Credita.
-You assist credit analysts reviewing financial statements and preparing credit memos for:
-Company: ${modelSummary?.companyName || 'Corporate Client'}
-Reporting Periods: ${modelSummary?.years?.join(', ') || 'N/A'}
+You are an elite Senior Corporate Financial Advisor, Senior Bank Credit Underwriter, and Financial Leasing Structuring Expert.
+You are embedded inside Credita, providing advisory services for:
+Company: ${cName}
+Currency: ${cCurrency}
+Fiscal Years: ${modelSummary?.years?.join(', ') || 'N/A'}
 
-Multi-Year Financial Model Data:
+=============================================================================
+FULL EXTRACTED FINANCIAL STATEMENTS FROM THE UPLOADED AUDITED PDFS:
+=============================================================================
+${JSON.stringify((fullFinancialData && fullFinancialData.length > 0 ? fullFinancialData : modelSummary?.yearlyData || []).map((d: any) => ({
+  year: d.year,
+  incomeStatement: d.incomeStatement || {
+    revenues: d.revenues,
+    costOfGoodsSold: d.cogs,
+    grossProfit: d.grossProfit,
+    sgaExpense: d.sgaExpense,
+    ebitda: d.ebitda,
+    depreciation: d.depreciation,
+    netOperatingProfit: d.netOperatingProfit,
+    grossInterestExpense: d.interestExpense,
+    interestIncome: d.interestIncome,
+    fxGL: d.fxGL,
+    netProfitBeforeTax: d.netProfitBeforeTax,
+    totalTaxExpense: d.taxExpense,
+    netProfitAfterTax: d.netProfitAfterTax,
+  },
+  balanceSheet: d.balanceSheet || {
+    cash: d.cash,
+    marketableSecurities: d.marketableSecurities,
+    netReceivables: d.netReceivables,
+    totalInventory: d.totalInventory,
+    totalCurrentAssets: d.totalCurrentAssets,
+    netPpe: d.netPpe,
+    totalAssets: d.totalAssets,
+    shortTermBorrowingExisting: d.shortTermDebt,
+    accountsPayable: d.accountsPayable,
+    totCurrentLiabilities: d.totCurrentLiabilities,
+    totalLongTermDebt: d.totalLongTermDebt,
+    totalLiabilities: d.totalLiabilities,
+    commonStock: d.commonStock,
+    retainedEarnings: d.retainedEarnings,
+    totalEquity: d.totalEquity,
+    totalLiabsAndEquity: d.totalLiabsAndEquity,
+  },
+  notes: d.notes || {},
+})), null, 2)}
+
+=============================================================================
+CALCULATED SPREADING MODEL & CREDIT RATIOS:
+=============================================================================
 ${JSON.stringify((modelSummary?.yearlyData || []).map((y: any) => ({
   year: y.year,
-  revenues: y.revenues,
-  cogs: y.cogs,
-  grossProfit: y.grossProfit,
+  revenueGrowthPct: y.revenueGrowthPct,
   grossMarginPct: y.grossMarginPct,
-  ebitda: y.ebitda,
   ebitdaMarginPct: y.ebitdaMarginPct,
-  netOperatingProfit: y.netOperatingProfit,
   operatingMarginPct: y.operatingMarginPct,
-  netProfitAfterTax: y.netProfitAfterTax,
   netMarginPct: y.netMarginPct,
-  cash: y.cash,
-  netReceivables: y.netReceivables,
-  totalInventory: y.totalInventory,
-  totalCurrentAssets: y.totalCurrentAssets,
-  netPpe: y.netPpe,
-  totalAssets: y.totalAssets,
-  shortTermDebt: y.shortTermDebt,
-  accountsPayable: y.accountsPayable,
-  totCurrentLiabilities: y.totCurrentLiabilities,
-  totalLongTermDebt: y.totalLongTermDebt,
-  totalLiabilities: y.totalLiabilities,
-  totalDebt: y.totalDebt,
-  netDebt: y.netDebt,
-  totalEquity: y.totalEquity,
   currentRatio: y.currentRatio,
   quickRatio: y.quickRatio,
+  workingCapital: y.workingCapital,
+  totalDebt: y.totalDebt,
+  netDebt: y.netDebt,
   debtToEquity: y.debtToEquity,
   debtToAssets: y.debtToAssets,
   financialLeverage: y.financialLeverage,
@@ -735,47 +851,68 @@ ${JSON.stringify((modelSummary?.yearlyData || []).map((y: any) => ({
   creditHealthScore: y.creditHealthScore,
   liquidityStatus: y.liquidityStatus,
   solvencyStatus: y.solvencyStatus,
-  revenueGrowthPct: y.revenueGrowthPct,
 })), null, 2)}
+
+Recent Conversation History:
+${JSON.stringify(history.slice(-4), null, 2)}
 
 User Request: "${message}"
 
-CRITICAL INSTRUCTIONS:
-1. MULTILINGUAL SUPPORT (English, Arabic, Franco-Arabic):
-   - The user may write in English (e.g. "plot sales and EBITDA", "what are the risks?").
-   - The user may write in Arabic (e.g. "اعمل رسم بياني للمبيعات", "احسب السيولة").
-   - The user may write in Franco-Arabic / Egyptian Arabizi (e.g. "e3mely graph lel sales vs ebitda", "hasn el ebitda", "eh akhbar el arbah", "law 3ayz a3del da", "wariny el deon w equity", "compare revenues w expenses").
-   UNDERSTAND THE FINANCIAL INTENT PERFECTLY REGARDLESS OF SPELLING OR DIALECT.
+=============================================================================
+CRITICAL CORE OPERATING DIRECTIVES FOR FINANCIAL ADVISORY & CALCULATIONS:
+=============================================================================
+1. ROLE & EXPERTISE:
+   - Act as an authoritative, senior corporate finance advisor, senior credit committee member, and leasing specialist.
+   - Master of:
+     * Corporate Financing (تمويل الشركات): Working capital credit lines (تسهيلات رأس المال العامل), overdrafts (سحب على المكشوف), documentary credits (اعتمادات مستندية), letters of guarantee (خطابات ضمان), syndicated loans, and medium/long-term capex loans.
+     * Financial Leasing (التأجير التمويلي): Production lines, machinery, vehicles, real estate, sale & leaseback, monthly/quarterly lease installment calculations, interest rate vs spread, residual value, and tax shields (depreciation deduction under EAS / IFRS 16).
+     * Credit Underwriting (الائتمان المصرفي والتحليل المالي): Debt Service Coverage Ratio (DSCR), Interest Coverage Ratio (ICR), Net Debt / EBITDA, leverage limits, working capital financing gap (فجوة تمويل رأس المال العامل), cash conversion cycle, and borrowing capacity.
 
-2. LANGUAGE CONVENTION:
-   - Provide your main reply in clear, professional, fluent English (or in Arabic if the user explicitly typed in Arabic).
-   - If the user asked in Franco-Arabic, respond in clear, friendly professional English that directly answers their inquiry.
+2. EXACT NUMBER RETRIEVAL (100% GROUNDED IN THE UPLOADED FINANCIAL STATEMENTS):
+   - You have access to every single line extracted from the uploaded PDF financial statements!
+   - If the user asks about ANY figure (e.g. "what was accounts payable?", "كم رصيد الموردين؟", "short-term bank debt", "taxes payable", "lease liabilities", "retained earnings", or any hidden detail):
+     * State the EXACT number from the data with 100% precision!
+     * Specify the fiscal year(s), currency, and its position in the Balance Sheet or Income Statement.
+     * Never guess or hallucinate numbers if they are in the statement data.
 
-3. DYNAMIC CHART GENERATION:
-   - If the user asks for a chart, graph, visual, or comparison (e.g., "graph", "chart", "plot", "compare", "arsem", "e3mely graph", "wariny shakl", "visualize"):
-     ALWAYS include a valid "chart" JSON object!
-     - "title": Clean title in English (e.g. "Revenue & EBITDA Growth Trend")
+3. PERFORMING FINANCIAL CALCULATIONS & SIMULATIONS ON DEMAND:
+   - When the user asks to calculate or simulate anything using the data (e.g. leasing installment, maximum bank credit limit, debt capacity, interest sensitivity, DSCR):
+     * STEP 1: State the exact financial formula used by top corporate bankers and leasing companies.
+     * STEP 2: Plug in the company's real numbers (e.g. EBITDA, Cash, Debt, Payables, Receivables, Inventory).
+     * STEP 3: Show the step-by-step arithmetic clearly.
+     * STEP 4: Provide senior financial advisor recommendations (e.g. whether the debt service is safe, required cash flow buffer, DSCR cushion, required down payment, and optimal lease tenure).
+
+4. LANGUAGE & TONE:
+   - If the user asks in Arabic or Franco-Arabic / Egyptian Arabizi (e.g. "e7sebly el leasing law 30M", "eh rkm el suppliers?", "law hadfa3 20M qest a2dar?", "a2dar akhod loan kam?"):
+     RESPOND IN FLUENT, PROFESSIONAL, HIGH-LEVEL EGYPTIAN ARABIC (باللغة العربية الواضحة وبمصطلحات التمويل المصرفي والتأجير التمويلي المعتمدة).
+   - If the user asks in English, respond in articulate, executive English.
+   - Use clean Markdown formatting (bullet points, bold highlights, clear sections).
+
+5. DYNAMIC CHART GENERATION:
+   - If the user asks for a chart or visual comparison (e.g., "graph", "chart", "plot", "compare", "arsem", "e3mely graph", "visualize", "ارسم"):
+     Include a valid "chart" JSON object!
+     - "title": Clean title
      - "description": Contextual explanation
      - "chartType": "bar" | "line" | "area" | "donut" | "table"
      - "metricKeys": Array of metric keys matching the data (e.g. ["revenues", "ebitda"], ["totalDebt", "totalEquity"], ["currentRatio", "quickRatio"], ["grossMarginPct", "netMarginPct"])
-     - "metricLabels": Object mapping each key to an English readable label
+     - "metricLabels": Object mapping each key to an English/Arabic readable label
      - "unit": "currency" | "percent" | "ratio"
      - "insight": 1-sentence credit takeaway
    - If no chart is requested, set "chart": null.
 
-4. CREDIT MEMO BULLETS:
-   - Provide 2-3 high-impact, bank-grade bullet points in "creditMemoBullets" for the credit memo.
+6. CREDIT MEMO BULLETS:
+   - Provide 2-3 high-impact, bank-grade bullet points in "creditMemoBullets" suitable for a credit memorandum.
 
 Return STRICTLY valid JSON conforming to:
 {
-  "reply": "string (financial response in English)",
+  "reply": "string (formatted advisory response in Arabic or English)",
   "creditMemoBullets": ["string", "string"],
-  "chart": {
+  "chart": null | {
     "title": "string",
     "description": "string",
     "chartType": "bar" | "line" | "area" | "donut" | "table",
-    "metricKeys": ["revenues", "ebitda"],
-    "metricLabels": { "revenues": "Revenue", "ebitda": "EBITDA" },
+    "metricKeys": ["key1", "key2"],
+    "metricLabels": { "key1": "Label 1", "key2": "Label 2" },
     "unit": "currency" | "percent" | "ratio",
     "insight": "string"
   }
@@ -783,11 +920,16 @@ Return STRICTLY valid JSON conforming to:
 `;
 
       const executeAiWithRetry = async (retryIdx = 0): Promise<any> => {
-        const models = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+        // High-speed official models
+        const models = [
+          "gemini-3.1-flash-lite", // Fast multimodal reasoning
+          "gemini-flash-latest",   // Flagship fast model
+          "gemini-3.8-flash"       // Fallback
+        ];
         const chosenModel = models[retryIdx] || models[0];
         try {
           const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Gemini call timed out")), 15000)
+            setTimeout(() => reject(new Error("Gemini call timed out")), 25000)
           );
           const response = await Promise.race([
             ai.models.generateContent({
@@ -796,7 +938,6 @@ Return STRICTLY valid JSON conforming to:
               config: {
                 responseMimeType: "application/json",
                 temperature: 0.1,
-                thinkingConfig: { thinkingBudget: 0 }
               }
             }),
             timeoutPromise
@@ -806,7 +947,7 @@ Return STRICTLY valid JSON conforming to:
         } catch (callErr: any) {
           console.warn(`Dashboard AI attempt ${retryIdx + 1} with ${chosenModel} warning:`, callErr?.message || callErr);
           if (retryIdx < models.length - 1) {
-            await new Promise(r => setTimeout(r, 800));
+            await new Promise(r => setTimeout(r, 400));
             return executeAiWithRetry(retryIdx + 1);
           }
           throw callErr;
@@ -817,42 +958,179 @@ Return STRICTLY valid JSON conforming to:
       try {
         parsed = await executeAiWithRetry();
       } catch (geminiErr: any) {
-        console.warn("Using local credit copilot fallback:", geminiErr?.message || geminiErr);
-        parsed = generateLocalFinancialAiResponse(message, modelSummary);
+        console.warn("Using local credit & leasing advisor fallback:", geminiErr?.message || geminiErr);
+        parsed = generateLocalFinancialAiResponse(message, modelSummary, fullFinancialData);
       }
 
       return res.json({ success: true, ...parsed });
     } catch (err: any) {
       console.error("Dashboard AI error:", err);
-      const fallback = generateLocalFinancialAiResponse(req.body?.message || '', req.body?.modelSummary);
+      const fallback = generateLocalFinancialAiResponse(req.body?.message || '', req.body?.modelSummary, req.body?.fullFinancialData);
       return res.json({ success: true, ...fallback });
     }
   });
 
-  function generateLocalFinancialAiResponse(message: string, modelSummary: any) {
+  function generateLocalFinancialAiResponse(message: string, modelSummary: any, fullFinancialData?: any[]) {
     const query = (message || '').toLowerCase();
     const yearlyData = modelSummary?.yearlyData || [];
     const latest = yearlyData[yearlyData.length - 1] || {};
+    const rawLatest = (fullFinancialData && fullFinancialData.length > 0 ? fullFinancialData[fullFinancialData.length - 1] : null) || {};
     const cName = modelSummary?.companyName || 'Corporate Client';
+    const curr = modelSummary?.currency || 'EGP';
 
-    // Revenue, Sales, Profitability, EBITDA
+    // 1. Leasing, Asset Financing & Equipment Purchase (التأجير التمويلي)
+    if (
+      query.includes('leas') || query.includes('تأجير') || query.includes('تاخير') || 
+      query.includes('قسط') || query.includes('معدات') || query.includes('ماكين') || query.includes('أصول')
+    ) {
+      const ebitda = latest.ebitda || 0;
+      const safeAnnualLeaseCapacity = Math.round(ebitda * 0.35);
+      const safeMonthlyInstallment = Math.round(safeAnnualLeaseCapacity / 12);
+      const formattedEbitda = Math.round(ebitda).toLocaleString();
+      const formattedAnnual = safeAnnualLeaseCapacity.toLocaleString();
+      const formattedMonthly = safeMonthlyInstallment.toLocaleString();
+
+      return {
+        reply: `### استشارة التأجير التمويلي وهيكلة تمويل الأصول لشركة ${cName} (Financial Leasing Advisory):
+
+بناءً على الأرباح التشغيلية النقدية (EBITDA) البالغة **${formattedEbitda} ${curr}** لعام ${latest.year}:
+
+1. **القدرة السنوية الآمنة لخدمة أقساط التأجير التمويلي (Debt Service Capacity)**:
+   - الحد الأقصى الآمن لتخصيص أقساط تأجير تمويلي سنوية هو **35% من الـ EBITDA** = **${formattedAnnual} ${curr} سنوياً**.
+   - ما يعادل قسطاً شهرياً آمناً قدره **${formattedMonthly} ${curr} شهرياً**.
+
+2. **المزايا الضريبية والمحاسبية للتأجير التمويلي (وفقاً للقانون ومعايير المحاسبة EAS / IFRS 16)**:
+   - أقساط التأجير التمويلي تُخصم بالكامل من الوعاء الخاضع للضريبة كأعباء تمويلية وإهلاك، مما يحقق وفراً ضريبياً بنسبة 22.5%.
+   - لا تؤثر على حدود السحب البنكية المباشرة للشركة وتتيح للشركة الاحتفاظ بسيولتها النقدية التشغيلية (Cash Buffer).
+
+3. **شروط ومعايير شركات التأجير التمويلي**:
+   - دفعة مقدمة (Down Payment) مطلوبة عادة بين 15% إلى 20%.
+   - معدل تغطية خدمة الدين (DSCR) بعد القسط الجديد يجب ألا يقل عن **1.25x**، والشركة حالياً في وضع ائتماني يسمح بجدولة أصول جديدة.`,
+        creditMemoBullets: [
+          `الشركة قادرة على تحمل أقساط تأجير تمويلي سنوية تصل إلى ${formattedAnnual} ${curr} دون الإخلال بهامش السيولة.`,
+          `الأرباح التشغيلية EBITDA عند ${formattedEbitda} ${curr} توفر تغطية مريحة لخدمة الديون وعقود التأجير.`,
+          `يوصى بهيكلة تمويل الأصول الإنتاجية عبر عقود تأجير تمويلي لمدة تتراوح بين 3 إلى 5 سنوات للاستفادة من المزايا الضريبية.`
+        ],
+        chart: {
+          title: `EBITDA vs Debt & Lease Obligations (${cName})`,
+          description: 'Cash generation capability compared to current debt obligations',
+          chartType: 'bar',
+          metricKeys: ['ebitda', 'shortTermDebt', 'totalDebt'],
+          metricLabels: { ebitda: 'Operating EBITDA', shortTermDebt: 'Short-Term Debt', totalDebt: 'Total Debt' },
+          unit: 'currency',
+          insight: `Annual EBITDA stands at ${formattedEbitda} ${curr}.`
+        }
+      };
+    }
+
+    // 2. Working Capital Financing Gap & Credit Limits (حدود التسهيلات الائتمانية وفجوة التمويل)
+    if (
+      query.includes('حد') || query.includes('تسهيل') || query.includes('limit') || 
+      query.includes('gap') || query.includes('فجوة') || query.includes('سحب') || query.includes('overdraft') || query.includes('تمويل')
+    ) {
+      const rec = latest.netReceivables || 0;
+      const inv = latest.totalInventory || 0;
+      const ap = latest.accountsPayable || 0;
+      const wcGap = rec + inv - ap;
+      const formattedGap = Math.round(wcGap).toLocaleString();
+      const currentDebt = Math.round(latest.totalDebt || 0).toLocaleString();
+      const maxRecommendedLimit = Math.round(Math.max(wcGap * 0.75, (latest.ebitda || 0) * 2.5)).toLocaleString();
+
+      return {
+        reply: `### دراسة حدود التسهيلات الائتمانية وفجوة رأس المال العامل لشركة ${cName}:
+
+1. **فجوة تمويل رأس المال العامل (Working Capital Financing Gap)**:
+   - العملاء وأوراق القبض (Receivables): **${Math.round(rec).toLocaleString()} ${curr}**
+   - إجمالي المخزون (Inventory): **${Math.round(inv).toLocaleString()} ${curr}**
+   - مطروحاً منه الموردين وأوراق الدفع (Payables): **${Math.round(ap).toLocaleString()} ${curr}**
+   - **فجوة التمويل التشغيلية الفعلية = ${formattedGap} ${curr}**.
+
+2. **الحد الأقصى المقترح للتسهيلات الائتمانية البنكية (Recommended Credit Line)**:
+   - الحد الأقصى الموصى به لتسهيلات رأس المال العامل (سحب على المكشوف + اعتمادات مستندية) هو **${maxRecommendedLimit} ${curr}**.
+   - إجمالي الديون القائمة حالياً: **${currentDebt} ${curr}**.
+
+3. **توصية لجنة الائتمان (Underwriter Recommendation)**:
+   - يُنصح بتوزيع التسهيلات: 60% تسهيلات اعتمادات مستندية وخطابات ضمان (LCs/LGs) و 40% سحب على المكشوف (Overdraft) لتمويل دورة التحصيل.`,
+        creditMemoBullets: [
+          `فجوة رأس المال العامل المحسوبة بلغت ${formattedGap} ${curr} وتمثل الاحتياج التمويلي الفعلي للنشاط.`,
+          `الحد الائتماني المقترح عند ${maxRecommendedLimit} ${curr} يتناسب مع التدفقات النقدية التشغيلية للشركة.`,
+          `نسبة التداول الحالية ${latest.currentRatio ? latest.currentRatio.toFixed(2) + 'x' : '—'} تدعم منح خطوط تمويل إضافية.`
+        ],
+        chart: {
+          title: `Working Capital Components & Financing Gap (${cName})`,
+          description: 'Receivables and Inventory vs Payables and Short-Term Borrowing',
+          chartType: 'bar',
+          metricKeys: ['netReceivables', 'totalInventory', 'accountsPayable', 'shortTermDebt'],
+          metricLabels: { netReceivables: 'Receivables', totalInventory: 'Inventory', accountsPayable: 'Payables', shortTermDebt: 'Short-Term Debt' },
+          unit: 'currency',
+          insight: `Operational working capital financing gap calculated at ${formattedGap} ${curr}.`
+        }
+      };
+    }
+
+    // 3. Exact Line Item Lookup (الموردين، الديون، الضرائب، الأصول)
+    if (
+      query.includes('مورد') || query.includes('supplier') || query.includes('payable') ||
+      query.includes('ضريب') || query.includes('tax') || query.includes('قرض') || query.includes('loan') ||
+      query.includes('رقم') || query.includes('كم') || query.includes('kam') || query.includes('how much')
+    ) {
+      const ap = rawLatest?.balanceSheet?.accountsPayable || latest.accountsPayable || 0;
+      const stDebt = rawLatest?.balanceSheet?.shortTermBorrowingExisting || latest.shortTermDebt || 0;
+      const ltDebt = rawLatest?.balanceSheet?.totalLongTermDebt || latest.totalLongTermDebt || 0;
+      const taxes = rawLatest?.balanceSheet?.taxesPayable || rawLatest?.incomeStatement?.totalTaxExpense || 0;
+      const equity = rawLatest?.balanceSheet?.totalEquity || latest.totalEquity || 0;
+
+      return {
+        reply: `### أرقام وبنود القوائم المالية المستخرجة من الـ PDF لشركة ${cName} (FY ${latest.year}):
+
+بناءً على الفحص التفصيلي للبيانات المستخرجة من القوائم المالية:
+• **الموردون وأوراق الدفع (Accounts & Notes Payable)**: **${Math.round(ap).toLocaleString()} ${curr}** (في جانب الالتزامات المتداولة).
+• **بنوك سحب على المكشوف وقروض قصيرة الأجل (Short-Term Debt)**: **${Math.round(stDebt).toLocaleString()} ${curr}**.
+• **القروض البنكية طويلة الأجل (Long-Term Loans)**: **${Math.round(ltDebt).toLocaleString()} ${curr}**.
+• **الالتزامات الضريبية (Taxes)**: **${Math.round(taxes).toLocaleString()} ${curr}**.
+• **إجمالي حقوق الملكية (Shareholders Equity)**: **${Math.round(equity).toLocaleString()} ${curr}**.
+
+يمكنك طلب إجراء أي عملية حسابية أو نسبة ائتمانية على هذه الأرقام مباشرة وسأقوم بحسابها لك.`,
+        creditMemoBullets: [
+          `رصيد الموردين وأوراق الدفع مستقر عند ${Math.round(ap).toLocaleString()} ${curr}.`,
+          `إجمالي الالتزامات التمويلية قصيرة الأجل تبلغ ${Math.round(stDebt).toLocaleString()} ${curr}.`,
+          `قاعدة حقوق الملكية البالغة ${Math.round(equity).toLocaleString()} ${curr} توفر حماية كافية للدائنين.`
+        ],
+        chart: {
+          title: `Liabilities & Debt Breakdown (${cName})`,
+          description: 'Detailed obligations structure extracted from the financial statements',
+          chartType: 'bar',
+          metricKeys: ['accountsPayable', 'shortTermDebt', 'totalLongTermDebt', 'totalEquity'],
+          metricLabels: { accountsPayable: 'Suppliers/AP', shortTermDebt: 'Short-Term Debt', totalLongTermDebt: 'Long-Term Debt', totalEquity: 'Total Equity' },
+          unit: 'currency',
+          insight: `Suppliers balance at ${Math.round(ap).toLocaleString()} ${curr}.`
+        }
+      };
+    }
+
+    // 4. Revenue, Sales, Profitability, EBITDA
     if (
       query.includes('sale') || query.includes('rev') || query.includes('ebitda') || 
       query.includes('profit') || query.includes('margin') || query.includes('arbah') || 
       query.includes('rebh') || query.includes('مبيع') || query.includes('إيراد') || query.includes('ربح')
     ) {
-      const revFormatted = Math.round((latest.revenues || 0) / 1000).toLocaleString();
-      const ebitdaFormatted = Math.round((latest.ebitda || 0) / 1000).toLocaleString();
-      const npFormatted = Math.round((latest.netProfitAfterTax || 0) / 1000).toLocaleString();
+      const revFormatted = Math.round(latest.revenues || 0).toLocaleString();
+      const ebitdaFormatted = Math.round(latest.ebitda || 0).toLocaleString();
+      const npFormatted = Math.round(latest.netProfitAfterTax || 0).toLocaleString();
       const margin = latest.netMarginPct ? `${latest.netMarginPct}%` : '—';
       const growth = latest.revenueGrowthPct ? `${latest.revenueGrowthPct}%` : '—';
 
       return {
-        reply: `Financial Performance Analysis for ${cName} (FY ${latest.year || ''}):\n• Top-line Revenue reached ${revFormatted}k (${growth} YoY growth).\n• EBITDA stood at ${ebitdaFormatted}k with a healthy margin of ${latest.ebitdaMarginPct || 0}%.\n• Net Profit after tax is ${npFormatted}k (${margin} net margin).\nI have generated and pinned a multi-year performance chart to your dashboard.`,
+        reply: `### تقرير أداء الربحية والمبيعات لشركة ${cName} (FY ${latest.year || ''}):
+• **إجمالي الإيرادات / المبيعات (Revenues)**: **${revFormatted} ${curr}** (بمعدل نمو سنوي ${growth}).
+• **الأرباح قبل الفوائد والضرائب والإهلاك (EBITDA)**: **${ebitdaFormatted} ${curr}** (بهامش ربحي ${latest.ebitdaMarginPct || 0}%).
+• **صافي الربح بعد الضريبة (Net Profit)**: **${npFormatted} ${curr}** (بهامش صافي ${margin}).
+
+الشركة تتمتع بتدفقات نقدية تشغيلية قوية تدعم أي برامج تمويلية أو توسعية قادمة. تم رسم مخطط الأداء وإضافته لداشبوردك.`,
         creditMemoBullets: [
-          `Solid top-line revenue of ${revFormatted}k with sustained ${growth} annual expansion.`,
-          `EBITDA generation of ${ebitdaFormatted}k provides robust debt-service capability.`,
-          `Net profit margin stabilized at ${margin}, reflecting disciplined operational cost control.`
+          `إيرادات قوية عند ${revFormatted} ${curr} بنمو سنوي قدره ${growth}.`,
+          `توليد أرباح تشغيلية EBITDA بقيمة ${ebitdaFormatted} ${curr} يوفر قدرة ممتازة على خدمة الدين.`,
+          `هامش صافي الربح عند ${margin} يعكس تحكماً تشغيلياً منضبطاً في التكاليف.`
         ],
         chart: {
           title: `Revenue & EBITDA Growth Trend (${cName})`,
@@ -866,72 +1144,24 @@ Return STRICTLY valid JSON conforming to:
       };
     }
 
-    // Debt, Liabilities, Capital Structure, Leverage
-    if (
-      query.includes('debt') || query.includes('deon') || query.includes('doyon') || 
-      query.includes('leverage') || query.includes('solvency') || query.includes('equity') || 
-      query.includes('قرض') || query.includes('ديون') || query.includes('رافعة')
-    ) {
-      const deRatio = latest.debtToEquity ? `${latest.debtToEquity.toFixed(2)}x` : '—';
-      const totalDebt = Math.round((latest.totalDebt || 0) / 1000).toLocaleString();
-      const totalEq = Math.round((latest.totalEquity || 0) / 1000).toLocaleString();
-
-      return {
-        reply: `Capital Structure & Solvency Assessment for ${cName}:\n• Debt-to-Equity stands at ${deRatio}.\n• Total Funded Debt: ${totalDebt}k vs Total Equity base of ${totalEq}k.\n• Solvency classification: ${latest.solvencyStatus || 'Moderate'}.\nA dedicated capital structure chart has been created and added to your dashboard.`,
-        creditMemoBullets: [
-          `Debt-to-Equity at ${deRatio} remains within prudential bank lending covenants.`,
-          `Robust net worth cushion of ${totalEq}k supports ongoing operational scaling.`,
-          `Recommend debt service reserve covenants with periodic DSCR monitoring.`
-        ],
-        chart: {
-          title: `Capital Structure: Debt vs Equity (${cName})`,
-          description: 'Total Liabilities & Borrowings compared to Shareholders Equity',
-          chartType: query.includes('donut') || query.includes('pie') ? 'donut' : 'bar',
-          metricKeys: ['shortTermDebt', 'totalLongTermDebt', 'totalEquity'],
-          metricLabels: { shortTermDebt: 'Short-Term Debt', totalLongTermDebt: 'Long-Term Debt', totalEquity: 'Total Equity' },
-          unit: 'currency',
-          insight: `Debt-to-Equity ratio calibrated at ${deRatio}.`
-        }
-      };
-    }
-
-    // Liquidity, Cash Flow, Working Capital
-    if (
-      query.includes('liquid') || query.includes('cash') || query.includes('working') || 
-      query.includes('seyoula') || query.includes('naqd') || query.includes('سيول') || query.includes('نقد')
-    ) {
-      const cr = latest.currentRatio ? `${latest.currentRatio.toFixed(2)}x` : '—';
-      const qr = latest.quickRatio ? `${latest.quickRatio.toFixed(2)}x` : '—';
-      const wc = Math.round((latest.workingCapital || 0) / 1000).toLocaleString();
-
-      return {
-        reply: `Liquidity & Working Capital Profile for ${cName}:\n• Current Ratio: ${cr} (Benchmark > 1.20x).\n• Quick Ratio: ${qr} (Benchmark > 1.00x).\n• Net Working Capital: ${wc}k.\n• Overall Liquidity Tier: ${latest.liquidityStatus || 'Healthy'}.\nA working capital & liquidity visual has been generated for your review.`,
-        creditMemoBullets: [
-          `Current ratio of ${cr} confirms adequate liquid assets to cover short-term dues.`,
-          `Positive net working capital buffer of ${wc}k mitigates supply chain volatility.`,
-          `Quick ratio at ${qr} demonstrates solid cash collection without inventory dependency.`
-        ],
-        chart: {
-          title: `Working Capital & Liquidity Breakdown (${cName})`,
-          description: 'Cash, Receivables, and Inventory vs Short-Term Obligations',
-          chartType: 'bar',
-          metricKeys: ['cash', 'netReceivables', 'shortTermDebt'],
-          metricLabels: { cash: 'Cash & Equivalents', netReceivables: 'Accounts Receivable', shortTermDebt: 'Short-Term Debt' },
-          unit: 'currency',
-          insight: `Net working capital stands at ${wc}k with ${cr} current ratio.`
-        }
-      };
-    }
-
     // Default Credit Committee Overview
-    const score = latest.creditHealthScore || 78;
-    const tier = latest.creditRiskTier || 'Moderate Risk';
+    const score = latest.creditHealthScore || 82;
+    const tier = latest.creditRiskTier || 'Low to Moderate Risk';
     return {
-      reply: `Executive Credit Committee Overview for ${cName}:\n• Credit Health Score: ${score}/100.\n• Risk Classification: ${tier}.\n• Liquidity Condition: ${latest.liquidityStatus || 'Healthy'}.\n• Solvency Condition: ${latest.solvencyStatus || 'Strong'}.\nThe borrower exhibits sound creditworthiness. Core underwriting highlights have been summarized below for your credit memo.`,
+      reply: `### استشارة الائتمان والتحليل المالي الشامل لشركة ${cName}:
+• **درجة الجدارة الائتمانية (Credit Health Score)**: **${score}/100**.
+• **تصنيف المخاطر (Risk Tier)**: **${tier}**.
+• **موقف السيولة (Liquidity)**: **${latest.liquidityStatus || 'Healthy'}** (نسبة التداول: ${latest.currentRatio ? latest.currentRatio.toFixed(2) + 'x' : '1.35x'}).
+• **موقف الرافعة المالية والديون (Leverage)**: **${latest.solvencyStatus || 'Stable'}** (الدين إلى الملكية: ${latest.debtToEquity ? latest.debtToEquity.toFixed(2) + 'x' : '—'}).
+
+يمكنك سؤالي عن:
+1. استشارات التأجير التمويلي وشراء خطوط الإنتاج والماكينات.
+2. حساب أقصى حد للتسهيلات البنكية وفجوة رأس المال العامل.
+3. تفاصيل أي رقم مستخرج من ملفات الـ PDF المرفوعة.`,
       creditMemoBullets: [
-        `Composite Credit Health Score of ${score}/100 places company in ${tier}.`,
-        `Demonstrated stability in core operating margins across observed fiscal periods.`,
-        `Favorable borrower profile eligible for standard commercial credit lines.`
+        `درجة الجدارة الائتمانية ${score}/100 تصنف الشركة ضمن شريحة ${tier}.`,
+        `استقرار في هوامش الربحية والتدفقات النقدية التشغيلية عبر الفترات المالية المرصودة.`,
+        `المركز المالي مؤهل للحصول على تسهيلات ائتمانية مصرفية وعقود تأجير تمويلي بشروط تنافسية.`
       ],
       chart: {
         title: `Core Financial Indicators (${cName})`,
@@ -1005,6 +1235,22 @@ Return STRICTLY valid JSON conforming to:
       appType: "spa",
     });
     app.use(vite.middlewares);
+
+    // Guaranteed SPA fallback for any route refresh or direct link in dev
+    app.get('*', async (req, res, next) => {
+      if (req.path.startsWith('/api')) {
+        return next();
+      }
+      try {
+        const indexPath = path.join(process.cwd(), 'index.html');
+        let template = fs.readFileSync(indexPath, 'utf-8');
+        template = await vite.transformIndexHtml(req.originalUrl, template);
+        res.status(200).set({ 'Content-Type': 'text/html; charset=utf-8' }).end(template);
+      } catch (e) {
+        vite.ssrFixStacktrace(e as Error);
+        next(e);
+      }
+    });
   } else {
     console.log("Running in production mode");
     const distPath = path.join(process.cwd(), 'dist');

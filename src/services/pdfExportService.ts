@@ -180,15 +180,15 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
   pdf.rect(0, 0, pageWidth, pageHeight, 'F');
 
   // =========================================================================
-  // 1. POWER BI TOP RIBBON & TITLE BANNER
+  // 1. EXECUTIVE TOP RIBBON & TITLE BANNER
   // =========================================================================
   const headerY = 7;
   const headerH = 17;
-  pdf.setFillColor(15, 23, 42); // Power BI Dark Slate Navy
+  pdf.setFillColor(15, 23, 42); // Deep Executive Slate Navy
   pdf.roundedRect(pad, headerY, contentWidth, headerH, 2, 2, 'F');
 
-  // Power BI signature gold/yellow indicator
-  pdf.setFillColor(242, 200, 17); // Power BI Yellow #F2C811
+  // Executive blue indicator
+  pdf.setFillColor(37, 99, 235); // Royal Blue #2563EB
   pdf.roundedRect(pad, headerY, 3.5, headerH, 1, 1, 'F');
 
   // Handle Company Name (Arabic or English)
@@ -215,15 +215,15 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
     pdf.text(safeName, pad + 7, headerY + 7);
   }
 
-  pdf.setFont('helvetica', 'normal');
+  pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(7.5);
   pdf.setTextColor(148, 163, 184);
-  pdf.text('MICROSOFT POWER BI FINANCIAL SPREADING & EXECUTIVE REPORT', pad + 7, headerY + 12.5);
+  pdf.text('EXECUTIVE FINANCIAL SPREADING & PERFORMANCE DASHBOARD', pad + 7, headerY + 12.5);
 
   // Right side header info (Bounded to avoid any collision)
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8);
-  pdf.setTextColor(242, 200, 17);
+  pdf.setTextColor(147, 197, 253);
   const infoStr = `Period: ${displayPeriod}  |  Currency: ${model.currency}  |  FY ${years.map(y => y.year).join(', ')}`;
   pdf.text(infoStr, pageWidth - pad - 6, headerY + 7, { align: 'right' });
 
@@ -305,9 +305,10 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
     pdf.setTextColor(100, 116, 139);
     pdf.text(kpi.label, kx + 3.5, kpiY + 6.5);
 
-    // Big Bold Metric Value
+    // Big Bold Metric Value (Adaptive font size so long formatted numbers never collide)
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(11);
+    const valFontSize = kpi.val.length > 9 ? 9 : (kpi.val.length > 7 ? 10 : 11);
+    pdf.setFontSize(valFontSize);
     pdf.setTextColor(15, 23, 42);
     pdf.text(kpi.val, kx + 3.5, kpiY + 13.5);
 
@@ -316,9 +317,10 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
     pdf.roundedRect(kx + 3.5, kpiY + 16, kpiW - 7, 4.5, 1, 1, 'F');
 
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(6.2);
+    pdf.setFontSize(6);
     pdf.setTextColor(kpi.color[0], kpi.color[1], kpi.color[2]);
-    pdf.text(kpi.badge, kx + 5, kpiY + 19.3);
+    const safeBadge = kpi.badge.length > 18 ? kpi.badge.substring(0, 16) + '..' : kpi.badge;
+    pdf.text(safeBadge, kx + 5, kpiY + 19.2);
   });
 
   // =========================================================================
@@ -364,18 +366,18 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
 
   // Header Strip
   pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(t1X + 0.5, midY + 0.5, leftW - 1, 9, 2, 2, 'F');
+  pdf.roundedRect(t1X + 0.5, midY + 0.5, leftW - 1, 8.5, 2, 2, 'F');
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(7.8);
   pdf.setTextColor(30, 41, 59);
-  pdf.text('REVENUE, GROSS PROFIT & NET PROFIT TREND', t1X + 4, midY + 6);
+  pdf.text('REVENUE & PROFITABILITY TREND', t1X + 4, midY + 5.8);
 
   // Clean Legend on the right (Strictly bounded so it does NOT collide with title)
-  const legX = t1X + leftW - 46;
-  const legY = midY + 6;
+  const legX = t1X + leftW - 48;
+  const legY = midY + 5.8;
   // Rev
   pdf.setFillColor(0, 120, 212);
-  pdf.rect(legX, legY - 2.5, 2.5, 2.5, 'F');
+  pdf.rect(legX, legY - 2.2, 2.4, 2.4, 'F');
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(6);
   pdf.setTextColor(71, 85, 105);
@@ -383,19 +385,19 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
 
   // Gross
   pdf.setFillColor(16, 124, 65);
-  pdf.rect(legX + 13, legY - 2.5, 2.5, 2.5, 'F');
-  pdf.text('Gross', legX + 16.5, legY);
+  pdf.rect(legX + 13.5, legY - 2.2, 2.4, 2.4, 'F');
+  pdf.text('Gross', legX + 17, legY);
 
   // Net
   pdf.setFillColor(216, 59, 1);
-  pdf.rect(legX + 27, legY - 2.5, 2.5, 2.5, 'F');
-  pdf.text('Net', legX + 30.5, legY);
+  pdf.rect(legX + 28, legY - 2.2, 2.4, 2.4, 'F');
+  pdf.text('Net', legX + 31.5, legY);
 
   // Chart Graphics Area inside Tile 1
-  const chartLeft = t1X + 18;
-  const chartBottom = midY + midH - 14;
-  const chartHeight = 50;
-  const chartWidth = leftW - 24;
+  const chartLeft = t1X + 20;
+  const chartBottom = midY + midH - 14; // 119mm
+  const chartHeight = 39; // top gridline at 80mm (leaving 10.5mm from header)
+  const chartWidth = leftW - 27;
 
   const maxVal = Math.max(...years.map(y => Math.max(y.revenues || 0, y.grossProfit || 0, y.netProfitAfterTax || 0)), 1);
 
@@ -410,50 +412,59 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
     pdf.setFontSize(5.5);
     pdf.setTextColor(148, 163, 184);
     const stepVal = (maxVal * (g / gridSteps));
-    pdf.text(formatPdfNum(stepVal), chartLeft - 2, gy + 1.5, { align: 'right' });
+    pdf.text(formatPdfNum(stepVal), chartLeft - 2.5, gy + 1.5, { align: 'right' });
   }
 
   // Draw X-axis base line
   pdf.setDrawColor(203, 213, 225);
-  pdf.setLineWidth(0.5);
+  pdf.setLineWidth(0.4);
   pdf.line(chartLeft, chartBottom, chartLeft + chartWidth, chartBottom);
 
   // Render Bar Clusters
   const groupCount = years.length;
   const groupWidth = chartWidth / (groupCount || 1);
-  const barWidth = Math.min(groupWidth * 0.22, 10);
-  const barGap = 1.5;
+  const barWidth = Math.min(groupWidth * 0.22, 9.5);
+  const barGap = 1.2;
 
   years.forEach((yr, gIdx) => {
     const clusterW = barWidth * 3 + barGap * 2;
     const gx = chartLeft + gIdx * groupWidth + (groupWidth - clusterW) / 2;
 
     // Bar 1: Revenues
-    const revH = Math.max(((yr.revenues || 0) / maxVal) * chartHeight, 1);
+    const revH = Math.min(Math.max(((yr.revenues || 0) / maxVal) * chartHeight, 1), chartHeight);
     pdf.setFillColor(0, 120, 212);
-    pdf.roundedRect(gx, chartBottom - revH, barWidth, revH, 1, 1, 'F');
+    pdf.roundedRect(gx, chartBottom - revH, barWidth, revH, 0.8, 0.8, 'F');
 
     // Bar 2: Gross Profit
-    const gpH = Math.max(((yr.grossProfit || 0) / maxVal) * chartHeight, 1);
+    const gpH = Math.min(Math.max(((yr.grossProfit || 0) / maxVal) * chartHeight, 1), chartHeight);
     pdf.setFillColor(16, 124, 65);
-    pdf.roundedRect(gx + barWidth + barGap, chartBottom - gpH, barWidth, gpH, 1, 1, 'F');
+    pdf.roundedRect(gx + barWidth + barGap, chartBottom - gpH, barWidth, gpH, 0.8, 0.8, 'F');
 
     // Bar 3: Net Profit
-    const netH = Math.max(((yr.netProfitAfterTax || 0) / maxVal) * chartHeight, 1);
+    const netH = Math.min(Math.max(((yr.netProfitAfterTax || 0) / maxVal) * chartHeight, 1), chartHeight);
     pdf.setFillColor(216, 59, 1);
-    pdf.roundedRect(gx + (barWidth + barGap) * 2, chartBottom - netH, barWidth, netH, 1, 1, 'F');
+    pdf.roundedRect(gx + (barWidth + barGap) * 2, chartBottom - netH, barWidth, netH, 0.8, 0.8, 'F');
+
+    // Top Bar Value for Revenues if bar is high enough
+    if (revH > 8) {
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(5);
+      pdf.setTextColor(0, 120, 212);
+      pdf.text(formatPdfNum(yr.revenues), gx + barWidth / 2, chartBottom - revH - 1.2, { align: 'center' });
+    }
 
     // X-Axis Year Label
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(7.5);
     pdf.setTextColor(30, 41, 59);
-    pdf.text(`FY ${yr.year}`, gx + clusterW / 2, chartBottom + 5, { align: 'center' });
+    pdf.text(`FY ${yr.year}`, gx + clusterW / 2, chartBottom + 4.5, { align: 'center' });
 
     // Mini sub metrics under year label
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(5.8);
     pdf.setTextColor(100, 116, 139);
-    pdf.text(`Rev: ${formatPdfNum(yr.revenues)}`, gx + clusterW / 2, chartBottom + 9.5, { align: 'center' });
+    const subLabel = yr.netMarginPct !== null ? `${yr.netMarginPct.toFixed(1)}% Net` : formatPdfNum(yr.revenues);
+    pdf.text(subLabel, gx + clusterW / 2, chartBottom + 8.5, { align: 'center' });
   });
 
   // -------------------------------------------------------------------------
@@ -466,14 +477,14 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
 
   // Header (No emoji)
   pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(t2X + 0.5, midY + 0.5, rightW - 1, 9, 2, 2, 'F');
+  pdf.roundedRect(t2X + 0.5, midY + 0.5, rightW - 1, 8.5, 2, 2, 'F');
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(7.8);
   pdf.setTextColor(30, 41, 59);
-  pdf.text('CAPITAL STRUCTURE & BALANCE SHEET', t2X + 4, midY + 6);
+  pdf.text('CAPITAL STRUCTURE & BALANCE SHEET', t2X + 4, midY + 5.8);
 
   // Capital Structure Visual Horizontal Stacked Bar
-  const capBarY = midY + 14;
+  const capBarY = midY + 14.5;
   const capBarW = rightW - 8;
   const totLiab = latest.totalLiabilities || 0;
   const totEq = latest.totalEquity || 0;
@@ -482,38 +493,49 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
   const eqPct = 100 - liabPct;
 
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(7);
+  pdf.setFontSize(6.8);
   pdf.setTextColor(100, 116, 139);
-  pdf.text('LIABILITIES VS. EQUITY COMPOSITION', t2X + 4, capBarY);
+  pdf.text('LIABILITIES VS. EQUITY COMPOSITION', t2X + 4, capBarY - 1.5);
 
-  const barH = 7;
-  const liabW = (liabPct / 100) * capBarW;
+  const barH = 5.5;
+  const liabW = Math.max(Math.min((liabPct / 100) * capBarW, capBarW - 2), 2);
   const eqW = capBarW - liabW;
 
   // Liabilities Segment
   pdf.setFillColor(225, 29, 72); // Rose Red
-  pdf.roundedRect(t2X + 4, capBarY + 2.5, liabW, barH, 1, 1, 'F');
+  pdf.roundedRect(t2X + 4, capBarY, liabW, barH, 0.8, 0.8, 'F');
   // Equity Segment
   pdf.setFillColor(79, 70, 229); // Indigo
-  pdf.roundedRect(t2X + 4 + liabW, capBarY + 2.5, eqW, barH, 1, 1, 'F');
+  pdf.roundedRect(t2X + 4 + liabW, capBarY, eqW, barH, 0.8, 0.8, 'F');
 
-  if (liabW > 16) {
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(6.5);
-    pdf.setTextColor(255, 255, 255);
-    pdf.text(`${liabPct}% Liab`, t2X + 6, capBarY + 7);
+  // Centered labels inside segments with safe thresholds
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(6);
+  pdf.setTextColor(255, 255, 255);
+  if (liabW >= 22) {
+    pdf.text(`${liabPct}% Liab`, t2X + 4 + liabW / 2, capBarY + 3.8, { align: 'center' });
+  } else if (liabW >= 12) {
+    pdf.text(`${liabPct}%`, t2X + 4 + liabW / 2, capBarY + 3.8, { align: 'center' });
   }
-  if (eqW > 16) {
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(6.5);
-    pdf.setTextColor(255, 255, 255);
-    pdf.text(`${eqPct}% Equity`, t2X + 4 + liabW + 2, capBarY + 7);
+
+  if (eqW >= 22) {
+    pdf.text(`${eqPct}% Equity`, t2X + 4 + liabW + eqW / 2, capBarY + 3.8, { align: 'center' });
+  } else if (eqW >= 12) {
+    pdf.text(`${eqPct}%`, t2X + 4 + liabW + eqW / 2, capBarY + 3.8, { align: 'center' });
   }
+
+  // Mini sub-legend under stacked bar to prevent any ambiguity
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(5.5);
+  pdf.setTextColor(100, 116, 139);
+  pdf.text(`Liabilities: ${formatPdfNum(latest.totalLiabilities)} (${liabPct}%)`, t2X + 4, capBarY + 8.5);
+  pdf.text(`Equity: ${formatPdfNum(latest.totalEquity)} (${eqPct}%)`, t2X + rightW - 4, capBarY + 8.5, { align: 'right' });
 
   // 4 Rectangular Balance Metric Mini-Cards
-  const miniGridY = capBarY + 13.5;
-  const miniCardW = (rightW - 11) / 2;
-  const miniCardH = 22;
+  // Fixed heights & positioning so cards NEVER protrude or collide with Tile 2 border!
+  const miniGridY = capBarY + 11.5; // ~91.5mm
+  const miniCardW = (rightW - 11) / 2; // ~54mm
+  const miniCardH = 18; // Height 18mm, total 2 rows with gap = 38.5mm -> ends at ~130mm (Tile 2 ends at 133mm)
 
   const bsm = [
     { label: 'Cash & Equivalents', val: formatPdfNum(latest.cash), sub: latest.netDebt !== null ? `Net Debt: ${formatPdfNum(latest.netDebt)}` : 'Liquidity', col: [0, 130, 114] },
@@ -524,7 +546,7 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
 
   bsm.forEach((m, mIdx) => {
     const mx = t2X + 4 + (mIdx % 2) * (miniCardW + 3);
-    const my = miniGridY + Math.floor(mIdx / 2) * (miniCardH + 3);
+    const my = miniGridY + Math.floor(mIdx / 2) * (miniCardH + 2.5);
 
     pdf.setFillColor(248, 250, 252);
     pdf.setDrawColor(226, 232, 240);
@@ -535,19 +557,19 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
     pdf.rect(mx, my, 1.5, miniCardH, 'F');
 
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(6.2);
+    pdf.setFontSize(5.8);
     pdf.setTextColor(100, 116, 139);
-    pdf.text(m.label.toUpperCase(), mx + 3.5, my + 5.5);
+    pdf.text(m.label.toUpperCase(), mx + 3.5, my + 4.8);
 
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(9);
     pdf.setTextColor(15, 23, 42);
-    pdf.text(m.val, mx + 3.5, my + 12);
+    pdf.text(m.val, mx + 3.5, my + 10.8);
 
     pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(5.8);
+    pdf.setFontSize(5.5);
     pdf.setTextColor(71, 85, 105);
-    pdf.text(m.sub, mx + 3.5, my + 17.5);
+    pdf.text(m.sub, mx + 3.5, my + 15.6);
   });
 
   // =========================================================================
@@ -578,9 +600,9 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
   ];
 
   liqItems.forEach((it, iIdx) => {
-    const iy = btmY + 14 + iIdx * 11.5;
+    const iy = btmY + 13.5 + iIdx * 11;
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(7.2);
+    pdf.setFontSize(7);
     pdf.setTextColor(71, 85, 105);
     pdf.text(it.label, b1X + 4, iy);
 
@@ -590,9 +612,9 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
     pdf.text(it.val, b1X + btmW - 4, iy, { align: 'right' });
 
     pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(5.8);
+    pdf.setFontSize(5.6);
     pdf.setTextColor(148, 163, 184);
-    pdf.text(it.target, b1X + 4, iy + 4.5);
+    pdf.text(it.target, b1X + 4, iy + 4.2);
 
     if (iIdx < liqItems.length - 1) {
       pdf.setDrawColor(241, 245, 249);
@@ -622,9 +644,9 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
   ];
 
   profItems.forEach((it, iIdx) => {
-    const iy = btmY + 14 + iIdx * 11.5;
+    const iy = btmY + 13.5 + iIdx * 11;
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(7.2);
+    pdf.setFontSize(7);
     pdf.setTextColor(71, 85, 105);
     pdf.text(it.label, b2X + 4, iy);
 
@@ -633,12 +655,19 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
     pdf.setTextColor(15, 23, 42);
     pdf.text(it.val, b2X + btmW - 4, iy, { align: 'right' });
 
+    // Progress bar positioned with clear margin below text
     const pBarW = btmW - 8;
     const fillW = Math.max(Math.min((Math.abs(it.pct) / 60) * pBarW, pBarW), 2);
     pdf.setFillColor(241, 245, 249);
-    pdf.roundedRect(b2X + 4, iy + 2.5, pBarW, 2.5, 0.5, 0.5, 'F');
+    pdf.roundedRect(b2X + 4, iy + 3.2, pBarW, 2.2, 0.6, 0.6, 'F');
     pdf.setFillColor(it.col[0], it.col[1], it.col[2]);
-    pdf.roundedRect(b2X + 4, iy + 2.5, fillW, 2.5, 0.5, 0.5, 'F');
+    pdf.roundedRect(b2X + 4, iy + 3.2, fillW, 2.2, 0.6, 0.6, 'F');
+
+    if (iIdx < profItems.length - 1) {
+      pdf.setDrawColor(245, 247, 250);
+      pdf.setLineWidth(0.2);
+      pdf.line(b2X + 4, iy + 7.5, b2X + btmW - 4, iy + 7.5);
+    }
   });
 
   // Tile C: Solvency, Leverage & Credit Scorecard (No emoji)
@@ -655,26 +684,30 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
   pdf.text('LEVERAGE & CREDIT HEALTH', b3X + 4, btmY + 5.8);
 
   // Big Credit Score Badge
-  const scoreBadgeY = btmY + 12;
+  const scoreBadgeY = btmY + 11.5;
   pdf.setFillColor(15, 23, 42);
-  pdf.roundedRect(b3X + 4, scoreBadgeY, btmW - 8, 14, 1.5, 1.5, 'F');
+  pdf.roundedRect(b3X + 4, scoreBadgeY, btmW - 8, 13.5, 1.5, 1.5, 'F');
 
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(6.2);
+  pdf.setFontSize(6);
   pdf.setTextColor(242, 200, 17);
-  pdf.text('OVERALL CREDIT HEALTH SCORE', b3X + 8, scoreBadgeY + 5);
+  pdf.text('OVERALL CREDIT HEALTH SCORE', b3X + 7, scoreBadgeY + 4.2);
 
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(11);
   pdf.setTextColor(255, 255, 255);
   const displayScore = overrides?.creditScore || latest.creditHealthScore || 85;
-  pdf.text(`${displayScore} / 100`, b3X + 8, scoreBadgeY + 11.5);
+  pdf.text(`${displayScore} / 100`, b3X + 7, scoreBadgeY + 10.5);
 
-  // Credit Tier tag (Clean text, no corrupted bullets)
+  // Credit Tier tag inside dedicated right pill (Guaranteed zero collision with score)
+  const tierWidth = 26;
+  const tierX = b3X + btmW - 8 - tierWidth;
+  pdf.setFillColor(30, 41, 59);
+  pdf.roundedRect(tierX, scoreBadgeY + 3.8, tierWidth, 5.8, 1, 1, 'F');
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(7);
+  pdf.setFontSize(6.2);
   pdf.setTextColor(16, 185, 129);
-  pdf.text(`[ ${latest.creditRiskTier || 'Low Risk'} Tier ]`, b3X + btmW - 8, scoreBadgeY + 11.5, { align: 'right' });
+  pdf.text(latest.creditRiskTier || 'Low Risk', tierX + tierWidth / 2, scoreBadgeY + 7.7, { align: 'center' });
 
   // Leverage Metrics
   const solvItems = [
@@ -684,7 +717,7 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
   ];
 
   solvItems.forEach((it, sIdx) => {
-    const sy = btmY + 32 + sIdx * 9.5;
+    const sy = btmY + 28.5 + sIdx * 9.5;
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(6.8);
     pdf.setTextColor(71, 85, 105);
@@ -698,22 +731,22 @@ export function generateDirectVector1PagePdf(data: FinancialData[], overrides?: 
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(5.5);
     pdf.setTextColor(148, 163, 184);
-    pdf.text(it.sub, b3X + 4, sy + 3.8);
+    pdf.text(it.sub, b3X + 4, sy + 3.6);
 
     if (sIdx < solvItems.length - 1) {
       pdf.setDrawColor(241, 245, 249);
       pdf.setLineWidth(0.3);
-      pdf.line(b3X + 4, sy + 5, b3X + btmW - 4, sy + 5);
+      pdf.line(b3X + 4, sy + 5.5, b3X + btmW - 4, sy + 5.5);
     }
   });
 
   // =========================================================================
-  // 5. POWER BI FOOTER
+  // 5. EXECUTIVE FOOTER
   // =========================================================================
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(6.5);
   pdf.setTextColor(100, 116, 139);
-  pdf.text('MICROSOFT POWER BI DESKTOP SPREADING SUITE  •  EXECUTIVE FINANCIAL CANVAS  •  CONFIDENTIAL', pad, pageHeight - 3.5);
+  pdf.text('CREDITA FINANCIAL SPREADING SUITE  •  EXECUTIVE PERFORMANCE DASHBOARD  •  CONFIDENTIAL', pad, pageHeight - 3.5);
 
   pdf.setFont('helvetica', 'normal');
   pdf.text('Page 1 of 1', pageWidth - pad, pageHeight - 3.5, { align: 'right' });
@@ -737,7 +770,7 @@ export async function exportDashboardToPdf(
   const cleanCompany = (companyName || 'Corporate')
     .replace(/[^a-zA-Z0-9\u0600-\u06FF_-]/g, '_')
     .trim() || 'Financial';
-  const fileName = `${cleanCompany}_PowerBI_Dashboard_1Page.pdf`;
+  const fileName = `${cleanCompany}_Executive_Dashboard.pdf`;
 
   // 1. Direct high-fidelity vector PDF generation (100% crisp typography, zero blur, zero mojibake, includes all user edits)
   if (financialData && financialData.length > 0) {

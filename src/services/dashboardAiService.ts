@@ -1,4 +1,5 @@
 import { ModelSummary, CalculatedYearData } from './financialModel';
+import { FinancialData } from './gemini';
 
 export type ChartVisualType = 'bar' | 'line' | 'area' | 'donut' | 'table';
 
@@ -79,7 +80,8 @@ export const AVAILABLE_METRICS: AvailableMetric[] = [
 export async function askDashboardAI(
   message: string,
   modelSummary: ModelSummary,
-  history: AIChatMessage[] = []
+  history: AIChatMessage[] = [],
+  fullFinancialData?: FinancialData[]
 ): Promise<{
   reply: string;
   chart?: CustomVisualWidget | null;
@@ -91,6 +93,7 @@ export async function askDashboardAI(
     body: JSON.stringify({
       message,
       modelSummary,
+      fullFinancialData,
       history: history.slice(-6).map(h => ({
         role: h.sender === 'user' ? 'user' : 'model',
         text: h.text,

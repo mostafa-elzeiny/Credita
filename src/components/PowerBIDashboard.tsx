@@ -55,7 +55,7 @@ import {
 } from 'recharts';
 import { FinancialData } from '../services/gemini';
 import { computeFinancialModel, CalculatedYearData } from '../services/financialModel';
-import { buildCompletePowerBiSolution, PowerBiGenerationResult } from '../services/powerBiGenerator';
+import { buildCompletePowerBiSolution, PowerBiGenerationResult, generatePowerBiExcelWorkbook } from '../services/powerBiGenerator';
 import { 
   CustomVisualWidget, 
   ChartVisualType, 
@@ -63,7 +63,7 @@ import {
 } from '../services/dashboardAiService';
 import EditableChartWidget from './EditableChartWidget';
 import DashboardAICopilot from './DashboardAICopilot';
-import { exportDashboardToPdf } from '../services/pdfExportService';
+import { exportDashboardToPdf, downloadBlobReliably } from '../services/pdfExportService';
 
 interface PowerBIDashboardProps {
   data: FinancialData[];
@@ -107,7 +107,12 @@ export default function PowerBIDashboard({
   const [editableData, setEditableData] = useState<FinancialData[]>(data);
 
   useEffect(() => {
-    setEditableData(data);
+    setEditableData(prev => {
+      if (prev.length === data.length && JSON.stringify(prev) === JSON.stringify(data)) {
+        return prev;
+      }
+      return data;
+    });
   }, [data]);
 
   // Custom Editable Visuals State (Power BI Style with clean titles)
@@ -401,7 +406,7 @@ export default function PowerBIDashboard({
 
   useEffect(() => {
     if (initialCompactMode !== undefined) {
-      setIsCompactMode(initialCompactMode);
+      setIsCompactMode(prev => prev === initialCompactMode ? prev : initialCompactMode);
     }
   }, [initialCompactMode]);
 
@@ -415,43 +420,41 @@ export default function PowerBIDashboard({
   const [editedKpis, setEditedKpis] = useState<{ [key: string]: string }>({});
 
   const handleUpdateYearMetric = (year: number, field: string, val: number) => {
-    setEditableData(prev => {
-      const updated = prev.map(item => {
-        if (item.year !== year) return item;
-        const copy = JSON.parse(JSON.stringify(item));
-        if (field === 'revenues') {
-          copy.incomeStatement.revenues = val;
-          const cogs = copy.incomeStatement.costOfGoodsSold || 0;
-          copy.incomeStatement.grossProfit = val - cogs;
-        } else if (field === 'cogs') {
-          copy.incomeStatement.costOfGoodsSold = val;
-          copy.incomeStatement.grossProfit = (copy.incomeStatement.revenues || 0) - val;
-        } else if (field === 'grossProfit') {
-          copy.incomeStatement.grossProfit = val;
-        } else if (field === 'sgaExpense') {
-          copy.incomeStatement.sgaExpense = val;
-        } else if (field === 'ebitda') {
-          copy.incomeStatement.netOperatingProfit = val;
-        } else if (field === 'netProfitAfterTax') {
-          copy.incomeStatement.netProfitAfterTax = val;
-        } else if (field === 'cash') {
-          copy.balanceSheet.cash = val;
-        } else if (field === 'totalAssets') {
-          copy.balanceSheet.totalAssets = val;
-        } else if (field === 'totalLiabilities') {
-          copy.balanceSheet.totalLiabilities = val;
-        } else if (field === 'totalEquity') {
-          copy.balanceSheet.totalEquity = val;
-        } else if (field === 'totalDebt') {
-          copy.balanceSheet.shortTermDebt = val;
-        }
-        return copy;
-      });
-      if (onDataChange) {
-        onDataChange(updated);
+    const updated = editableData.map(item => {
+      if (item.year !== year) return item;
+      const copy = JSON.parse(JSON.stringify(item));
+      if (field === 'revenues') {
+        copy.incomeStatement.revenues = val;
+        const cogs = copy.incomeStatement.costOfGoodsSold || 0;
+        copy.incomeStatement.grossProfit = val - cogs;
+      } else if (field === 'cogs') {
+        copy.incomeStatement.costOfGoodsSold = val;
+        copy.incomeStatement.grossProfit = (copy.incomeStatement.revenues || 0) - val;
+      } else if (field === 'grossProfit') {
+        copy.incomeStatement.grossProfit = val;
+      } else if (field === 'sgaExpense') {
+        copy.incomeStatement.sgaExpense = val;
+      } else if (field === 'ebitda') {
+        copy.incomeStatement.netOperatingProfit = val;
+      } else if (field === 'netProfitAfterTax') {
+        copy.incomeStatement.netProfitAfterTax = val;
+      } else if (field === 'cash') {
+        copy.balanceSheet.cash = val;
+      } else if (field === 'totalAssets') {
+        copy.balanceSheet.totalAssets = val;
+      } else if (field === 'totalLiabilities') {
+        copy.balanceSheet.totalLiabilities = val;
+      } else if (field === 'totalEquity') {
+        copy.balanceSheet.totalEquity = val;
+      } else if (field === 'totalDebt') {
+        copy.balanceSheet.shortTermDebt = val;
       }
-      return updated;
+      return copy;
     });
+    setEditableData(updated);
+    if (onDataChange) {
+      onDataChange(updated);
+    }
   };
 
   const handleResetToOriginal = () => {
@@ -465,6 +468,31 @@ export default function PowerBIDashboard({
       onDataChange(data);
     }
     setDownloadNotice('تمت استعادة البيانات الأصلية للداشبورد بنجاح! ↺');
+  };
+
+  const handleDownloadDashboardExcel = async () => {
+    try {
+      const cleanCompany = (editedCompanyName || model.companyName || 'Corporate')
+        .replace(/[^a-zA-Z0-9\u0600-\u06FF_-]/g, '_').trim() || 'Financial';
+      const fileName = `${cleanCompany}_Financial_Model.xlsx`;
+
+      if (bundleResult?.xlsxBlob) {
+        const ok = await downloadBlobReliably(bundleResult.xlsxBlob, fileName, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        if (ok) {
+          setDownloadNotice('تم تنزيل شيت الإكسيل المالي الكامل بنجاح! 📊');
+          return;
+        }
+      }
+
+      const excelBlob = generatePowerBiExcelWorkbook(model, editableData);
+      const ok = await downloadBlobReliably(excelBlob, fileName, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      if (ok) {
+        setDownloadNotice('تم تنزيل شيت الإكسيل المالي الكامل بنجاح! 📊');
+      }
+    } catch (err) {
+      console.error('Download excel failed:', err);
+      alert('Failed to generate Excel file.');
+    }
   };
 
   const handlePrintOnePage = async () => {
@@ -576,7 +604,18 @@ export default function PowerBIDashboard({
 
           {/* Clean Executive Toolbar */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* 1. Download 1-Page PDF */}
+            {/* 1. Download Excel Sheet */}
+            <button
+              id="btn-download-dashboard-excel"
+              onClick={handleDownloadDashboardExcel}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition-all flex items-center gap-2 text-xs sm:text-sm shadow-md active:scale-95 border border-emerald-500 cursor-pointer"
+              title="تنزيل نموذج التحليل المالي الكامل كملف Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+              <span>Download Excel</span>
+            </button>
+
+            {/* 2. Download 1-Page PDF */}
             <button
               id="btn-print-one-page"
               onClick={handlePrintOnePage}
@@ -1983,6 +2022,7 @@ export default function PowerBIDashboard({
       {/* Floating AI Financial Analyst & Copilot */}
       <DashboardAICopilot
         modelSummary={model}
+        fullFinancialData={editableData}
         isDark={isDark}
         onAddCustomChart={handleAddCustomChart}
         onAddMemoObservation={(bullet) => {

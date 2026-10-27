@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useMemo, useEffect, useRef, ChangeEvent } from 'react';
+import { useState, useMemo, useEffect, useRef, ChangeEvent, memo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   FileUp, 
@@ -29,13 +29,15 @@ import {
   Moon,
   Sun,
   BarChart3,
-  Printer
+  Printer,
+  FileSpreadsheet
 } from 'lucide-react';
 import { utils, writeFile } from 'xlsx';
 import { FinancialData, extractFinancialData, extractFinancialDataBatch } from './services/gemini';
 import { computeFinancialModel } from './services/financialModel';
 import { generatePowerBiExcelWorkbook } from './services/powerBiGenerator';
 import PowerBIDashboard from './components/PowerBIDashboard';
+import DashboardAICopilot from './components/DashboardAICopilot';
 import { exportDashboardToPdf } from './services/pdfExportService';
 import { auth, db } from './firebase';
 import { 
@@ -237,17 +239,6 @@ function FinSpreadApp() {
       console.error('Logout failed:', error);
     }
   };
-
-  if (isAuthLoading) {
-    return (
-      <div className="min-h-screen bg-slate-50 dark:bg-deep-navy flex items-center justify-center transition-colors duration-300">
-        <div className="text-center">
-          <Loader2 className="w-12 h-12 animate-spin text-credita mx-auto mb-4" />
-          <p className="text-slate-500 dark:text-slate-400 font-medium">Loading Credita...</p>
-        </div>
-      </div>
-    );
-  }
 
 
   const addFiles = (filesList: File[]) => {
@@ -514,38 +505,54 @@ function FinSpreadApp() {
     return { ...data, incomeStatement: is, balanceSheet: bs };
   };
 
-  const handleValueChange = (fileId: string, section: 'incomeStatement' | 'balanceSheet', key: string, value: string) => {
+  const handleValueChange = useCallback((fileId: string, section: 'incomeStatement' | 'balanceSheet', key: string, value: string) => {
     const numValue = (parseFloat(value) || 0) * 1000;
-    setUploadedFiles(prev => prev.map(f => {
-      if (f.id !== fileId || !f.data) return f;
-      
-      const newData = {
-        ...f.data,
-        [section]: {
-          ...f.data[section],
-          [key]: numValue
-        }
-      };
-      
-      return { ...f, data: recalculateFinancials(newData) };
-    }));
-  };
-
-  const handleDashboardDataChange = (updated: FinancialData[]) => {
     setUploadedFiles(prev => {
-      return prev.map(f => {
+      let hasChanges = false;
+      const next = prev.map(f => {
+        if (f.id !== fileId || !f.data) return f;
+        
+        const currentSection = f.data[section] as any;
+        if (currentSection && currentSection[key] === numValue) {
+          return f;
+        }
+
+        const newData = {
+          ...f.data,
+          [section]: {
+            ...f.data[section],
+            [key]: numValue
+          }
+        };
+        
+        hasChanges = true;
+        return { ...f, data: recalculateFinancials(newData) };
+      });
+      return hasChanges ? next : prev;
+    });
+  }, []);
+
+  const handleDashboardDataChange = useCallback((updated: FinancialData[]) => {
+    setUploadedFiles(prev => {
+      let hasChanges = false;
+      const next = prev.map(f => {
         if (!f.data) return f;
         const matchingUpdated = updated.find(u => u.year === f.data?.year);
         if (matchingUpdated) {
-          return {
-            ...f,
-            data: recalculateFinancials(matchingUpdated)
-          };
+          const recalculated = recalculateFinancials(matchingUpdated);
+          if (JSON.stringify(f.data) !== JSON.stringify(recalculated)) {
+            hasChanges = true;
+            return {
+              ...f,
+              data: recalculated
+            };
+          }
         }
         return f;
       });
+      return hasChanges ? next : prev;
     });
-  };
+  }, []);
 
   const downloadExcel = () => {
     const wb = utils.book_new();
@@ -734,7 +741,9 @@ function FinSpreadApp() {
     ws['!cols'] = [{ wch: 35 }, ...sortedData.map(() => ({ wch: 15 }))];
     utils.book_append_sheet(wb, ws, 'Financial Spreading');
 
-    writeFile(wb, 'financial_spreading_analysis.xlsx');
+    const company = (sortedData[0]?.companyName || 'Financial_Spreading')
+      .replace(/[^a-zA-Z0-9\u0600-\u06FF_-]/g, '_').trim() || 'Financial_Spreading';
+    writeFile(wb, `${company}_Spreading_Model.xlsx`);
   };
 
   const downloadPowerBI = async () => {
@@ -778,7 +787,14 @@ function FinSpreadApp() {
     } catch (err) {
       console.warn('POST generate-pbix failed, falling back to direct stream:', err);
       const company = sortedData[0]?.companyName || 'Financial';
-      window.location.href = `/api/download-official-pbix?company=${encodeURIComponent(company)}&t=${Date.now()}`;
+      const cleanCompany = company.replace(/[^a-zA-Z0-9\u0600-\u06FF_-]/g, '_').trim() || 'Company';
+      const fallbackName = `${cleanCompany}_Financial_Dashboard.pbix`;
+      const fallbackLink = document.createElement('a');
+      fallbackLink.href = `/api/download-official-pbix?company=${encodeURIComponent(company)}&t=${Date.now()}`;
+      fallbackLink.download = fallbackName;
+      document.body.appendChild(fallbackLink);
+      fallbackLink.click();
+      setTimeout(() => document.body.removeChild(fallbackLink), 1000);
     } finally {
       setIsExportingPbix(false);
     }
@@ -1258,17 +1274,27 @@ function FinSpreadApp() {
                   <h2 className="text-3xl font-bold text-slate-900">Extraction Review</h2>
                   <p className="text-slate-500">Verify the key metrics extracted from each document.</p>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <button 
                     onClick={() => setStep('upload')}
-                    className="px-6 py-2 border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50 transition-all"
+                    className="px-6 py-2 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all text-sm"
                   >
                     Re-upload
                   </button>
+                  {sortedData.length > 0 && (
+                    <button 
+                      onClick={downloadExcel}
+                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-md transition-all flex items-center gap-2 text-sm active:scale-95 border border-emerald-500 cursor-pointer"
+                      title="تنزيل شيت الإكسيل مباشرة"
+                    >
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+                      <span>Download Excel</span>
+                    </button>
+                  )}
                   <button 
                     disabled={isProcessing || uploadedFiles.some(f => f.status === 'error')}
                     onClick={() => setStep('output')}
-                    className="px-6 py-2 bg-credita disabled:bg-slate-300 text-white rounded-xl font-semibold hover:opacity-90 shadow-lg shadow-slate-100 transition-all flex items-center gap-2"
+                    className="px-6 py-2 bg-credita disabled:bg-slate-300 text-white rounded-xl font-semibold hover:opacity-90 shadow-lg shadow-slate-100 transition-all flex items-center gap-2 text-sm"
                   >
                     Generate Output
                     <ArrowRight className="w-4 h-4" />
@@ -1415,6 +1441,15 @@ function FinSpreadApp() {
                     className="px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all text-sm"
                   >
                     Back to Review
+                  </button>
+                  <button 
+                    id="btn-download-excel-spread"
+                    onClick={downloadExcel}
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-2 text-sm active:scale-95 border border-emerald-500 cursor-pointer"
+                    title="تنزيل شيت الإكسيل الأصلي للتحليل المالي والقوائم المالية (Excel Spreading Model)"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+                    <span>Download Excel Sheet</span>
                   </button>
                   <button 
                     id="btn-download-one-page-pdf"
@@ -2245,6 +2280,18 @@ function FinSpreadApp() {
                   </div>
                 </section>
               </div>
+
+              {/* Floating AI Financial Advisor Copilot */}
+              {!showWebDashboard && sortedData.length > 0 && (
+                <DashboardAICopilot
+                  modelSummary={computeFinancialModel(sortedData)}
+                  fullFinancialData={sortedData}
+                  isDark={darkMode}
+                  onAddCustomChart={() => {
+                    setShowWebDashboard(true);
+                  }}
+                />
+              )}
             </motion.div>
           )}
           {step === 'history' && (
@@ -2560,7 +2607,55 @@ function FinSpreadApp() {
   );
 }
 
-function TableRow({ 
+function EditableCell({
+  value,
+  fileId,
+  onValueChange
+}: {
+  value: number;
+  fileId: string;
+  onValueChange: (fileId: string, newValue: string) => void;
+}) {
+  const formattedDefault = (value / 1000).toLocaleString('en-US');
+  const [localVal, setLocalVal] = useState(formattedDefault);
+  const [isFocused, setIsFocused] = useState(false);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setLocalVal((value / 1000).toLocaleString('en-US'));
+    }
+  }, [value, isFocused]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value.replace(/[^0-9.]/g, '');
+    if (raw === '') {
+      setLocalVal('');
+      return;
+    }
+    const parts = raw.split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    setLocalVal(parts.join('.'));
+  };
+
+  const handleBlur = () => {
+    setIsFocused(false);
+    const numericValue = localVal.replace(/,/g, '');
+    onValueChange(fileId, numericValue);
+  };
+
+  return (
+    <input 
+      type="text"
+      value={localVal}
+      onFocus={() => setIsFocused(true)}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      className="w-32 text-right bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 focus:ring-1 focus:ring-credita dark:focus:ring-neon-blue focus:border-credita dark:focus:border-neon-blue outline-none transition-all dark:text-slate-100"
+    />
+  );
+}
+
+const TableRow = memo(function TableRow({ 
   label, 
   values, 
   format, 
@@ -2583,36 +2678,6 @@ function TableRow({
   fileIds?: string[];
   notes?: string[];
 }) {
-  const [localValues, setLocalValues] = useState<string[]>([]);
-
-  useEffect(() => {
-    setLocalValues(values.map(v => (v / 1000).toLocaleString('en-US')));
-  }, [values]);
-
-  const handleInputChange = (index: number, val: string) => {
-    const newLocalValues = [...localValues];
-    // Remove non-numeric characters except decimal point
-    const numericValue = val.replace(/[^0-9.]/g, '');
-    
-    // Format with commas for display
-    if (numericValue === '') {
-      newLocalValues[index] = '';
-    } else {
-      const parts = numericValue.split('.');
-      parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-      newLocalValues[index] = parts.join('.');
-    }
-    
-    setLocalValues(newLocalValues);
-  };
-
-  const handleBlur = (index: number, val: string) => {
-    if (onValueChange && fileIds[index]) {
-      const numericValue = val.replace(/,/g, '');
-      onValueChange(fileIds[index], numericValue);
-    }
-  };
-
   return (
     <tr className={`${isHighlight ? 'bg-credita/5 dark:bg-neon-blue/5' : ''} hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors`}>
       <td className={`py-3 px-6 text-sm ${isBold ? 'font-bold text-slate-900 dark:text-slate-100' : 'text-slate-600 dark:text-slate-400'}`}>
@@ -2627,13 +2692,11 @@ function TableRow({
       </td>
       {values.map((v, i) => (
         <td key={i} className={`py-2 px-6 text-sm text-right font-mono ${isBold ? 'font-bold text-blue-700 dark:text-neon-blue' : 'text-blue-600 dark:text-blue-400'} ${isNegative && v > 0 ? 'text-red-500 dark:text-red-400' : ''}`}>
-          {isEditable && onValueChange ? (
-            <input 
-              type="text"
-              value={localValues[i] || ''}
-              onChange={(e) => handleInputChange(i, e.target.value)}
-              onBlur={(e) => handleBlur(i, e.target.value)}
-              className="w-32 text-right bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 focus:ring-1 focus:ring-credita dark:focus:ring-neon-blue focus:border-credita dark:focus:border-neon-blue outline-none transition-all dark:text-slate-100"
+          {isEditable && onValueChange && fileIds[i] ? (
+            <EditableCell
+              value={v}
+              fileId={fileIds[i]}
+              onValueChange={onValueChange}
             />
           ) : (
             format(v)
@@ -2642,7 +2705,7 @@ function TableRow({
       ))}
     </tr>
   );
-}
+});
 
 function AuthScreen({ 
   onLogin, 

@@ -16,6 +16,7 @@ import {
   BrainCircuit,
   PieChart
 } from 'lucide-react';
+import { FinancialData } from '../services/gemini';
 import { ModelSummary } from '../services/financialModel';
 import { 
   askDashboardAI, 
@@ -25,21 +26,23 @@ import {
 
 interface DashboardAICopilotProps {
   modelSummary: ModelSummary;
+  fullFinancialData?: FinancialData[];
   isDark?: boolean;
   onAddCustomChart: (chart: CustomVisualWidget) => void;
   onAddMemoObservation?: (bullet: string) => void;
 }
 
 const QUICK_PROMPTS = [
-  { label: '📊 Revenue vs EBITDA', query: 'Plot Revenue vs EBITDA and Net Income across all fiscal years in a bar chart' },
-  { label: '📈 Debt & Capital Structure', query: 'Show Capital Structure: compare Short-Term Debt, Long-Term Debt, and Total Equity' },
-  { label: '📉 Profitability Margins %', query: 'Create a line chart showing Gross Margin %, EBITDA Margin %, and Net Margin %' },
-  { label: '💧 Liquidity & Working Capital', query: 'Analyze liquidity and generate a chart comparing Cash, Receivables, and Short-Term Debt' },
-  { label: '🎯 Executive Summary Insights', query: 'Summarize the key financial strengths, solvency trends, and performance takeaways' },
+  { label: '🏢 قدرة التأجير التمويلي (Leasing)', query: 'لو الشركة هتعمل تأجير تمويلي لأصول أو ماكينات بـ 30 مليون جنيه، إيه القسط السنوي والشهري اللي تتحمله بناءً على الـ EBITDA والسيولة؟' },
+  { label: '💰 أقصى حد تسهيلات (Credit Limit)', query: 'احسبلي أقصى حد تسهيلات ائتمانية للشركة وفجوة رأس المال العامل (Working Capital Financing Gap)' },
+  { label: '🔍 فحص كل بنود الـ PDF والخصوم', query: 'أعطني تفاصيل الديون والالتزامات: الموردون، البنوك السحب على المكشوف، القروض، والالتزامات الأخرى في كل سنة' },
+  { label: '📈 حساسية رفع الفائدة (+2%)', query: 'لو البنك رفع الفائدة 2%، إجمالي أعباء التمويل هتزيد بكام وهتأثر إزاي على صافي الربح ومعدل تغطية الفوائد؟' },
+  { label: '📊 رسم بياني للأرباح والمبيعات', query: 'Plot Revenue vs EBITDA and Net Income across all fiscal years in a bar chart' },
 ];
 
 export default function DashboardAICopilot({
   modelSummary,
+  fullFinancialData,
   isDark = false,
   onAddCustomChart,
   onAddMemoObservation,
@@ -55,7 +58,7 @@ export default function DashboardAICopilot({
     {
       id: 'welcome',
       sender: 'assistant',
-      text: `Hello! I am your Senior Financial & Credit Analyst Copilot for **${modelSummary.companyName || 'Corporate Client'}**.\n\nYou can ask me questions or request charts in **English**, **العربية**, or **Franco-Arabic** (e.g. *"e3mely graph lel sales vs ebitda"*, *"what is the net margin trend?"*, *"احسبلي نسبة السيولة السريعة"*).\n\nWhenever you ask for a graph or comparison, I will instantly construct and add an interactive visual widget to your dashboard!`,
+      text: `أهلاً بك! أنا مستشارك المالي والائتماني المتخصص في **تمويل الشركات (Corporate Financing)**، **التأجير التمويلي (Financial Leasing)**، وهيكلة التسهيلات الائتمانية لشركة **${modelSummary.companyName || 'Corporate Client'}**.\n\n• **قارئ بيانات القوائم المالية والـ PDFs بدقة**: يمكنك سؤالي عن أي رقم في الميزانية أو قائمة الدخل حتى لو لم يكن معروضاً في الشاشة الرئيسية (تفاصيل الموردين، السحب على المكشوف، القروض البنكية، عقود التأجير التمويلي، الاحتياطيات، وجاري الشركاء).\n• **إجراء الحسابات المالية والمحاكاة فوراً**: اطلب مني حساب أقصى حد للتسهيلات، قسط تأجير تمويلي، معدل خدمة الدين (DSCR)، أو أثر تغير أسعار الفائدة وسأحسبها لك خطوة بخطوة بالمعادلات والأرقام الفعلية.\n• **دعم كامل للعربية والفرانكو والإنجليزي**: اسألني بالطريقة التي تناسبك وسأجيبك بأدق التفاصيل والرسوم البيانية!`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     }
   ]);
@@ -84,7 +87,7 @@ export default function DashboardAICopilot({
     setIsLoading(true);
 
     try {
-      const response = await askDashboardAI(textToSend, modelSummary, messages);
+      const response = await askDashboardAI(textToSend, modelSummary, messages, fullFinancialData);
 
       const assistantMsg: AIChatMessage = {
         id: `ai_${Date.now()}`,
@@ -134,10 +137,10 @@ export default function DashboardAICopilot({
           </div>
           <div className="text-left">
             <div className="text-xs font-black tracking-wide uppercase flex items-center gap-1.5">
-              <span>Financial Copilot</span>
+              <span>Financial Advisor</span>
               <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-400/20 text-emerald-300 border border-emerald-400/30">AI</span>
             </div>
-            <div className="text-[11px] font-normal text-indigo-100">Ask questions & generate charts</div>
+            <div className="text-[11px] font-normal text-indigo-100">تمويل • تأجير • حساب أرقام القوائم</div>
           </div>
         </button>
       )}
@@ -163,13 +166,13 @@ export default function DashboardAICopilot({
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-sm text-white">Credita Financial Copilot</h3>
+                    <h3 className="font-bold text-sm text-white">المستشار المالي والائتماني (AI Advisor)</h3>
                     <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
-                      Active
+                      Financing & Leasing
                     </span>
                   </div>
                   <p className="text-xs text-indigo-200/80">
-                    {modelSummary.companyName || 'Corporate Client'} • Charts & Credit Analysis
+                    {modelSummary.companyName || 'Corporate Client'} • استشارات التمويل، التأجير وحساب الأرقام
                   </p>
                 </div>
               </div>
@@ -270,7 +273,7 @@ export default function DashboardAICopilot({
               {isLoading && (
                 <div className="flex items-center gap-2 p-3 text-xs text-slate-500 bg-slate-50 dark:bg-slate-800/50 rounded-2xl w-fit">
                   <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
-                  <span>Financial copilot is reviewing numbers & preparing response...</span>
+                  <span>المستشار المالي يحلل أرقام القوائم والـ PDF ويجري الحسابات...</span>
                 </div>
               )}
 
@@ -284,7 +287,7 @@ export default function DashboardAICopilot({
                 value={inputQuery}
                 onChange={(e) => setInputQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                placeholder="Ask in English, Arabic, or Franco (e.g. 'e3mely graph lel sales vs ebitda')..."
+                placeholder="اسأل بالعربي، الفرانكو، أو الإنجليزي (مثل: احسبلي قسط تأجير تمويلي أو رقم الموردين كام)..."
                 disabled={isLoading}
                 className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
