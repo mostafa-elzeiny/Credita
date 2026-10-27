@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { ModelSummary, CalculatedYearData } from './financialModel';
+import type { ModelSummary, CalculatedYearData } from './financialModel.ts';
 
 function formatNumber(val: number | null | undefined): string {
   if (val === null || val === undefined || isNaN(val)) return '0';

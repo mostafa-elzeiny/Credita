@@ -4,7 +4,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
-import { customizePbixWithFinancialData } from "./src/services/pbixCustomizer";
+import { customizePbixWithFinancialData } from "./src/services/pbixCustomizer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

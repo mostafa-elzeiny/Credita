@@ -129,15 +129,18 @@ export async function extractFinancialData(file: File, highPrecision = false): P
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minutes timeout
 
-      const response = await fetch('/api/extract', {
+      const endpointsToTry = ['/api/extract', '/api/extract-financials'];
+      const targetEndpoint = endpointsToTry[(attempt - 1) % endpointsToTry.length];
+
+      const response = await fetch(targetEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           base64Data,
           mimeType,
-          highPrecision,
         }),
         signal: controller.signal,
       });
@@ -153,19 +156,19 @@ export async function extractFinancialData(file: File, highPrecision = false): P
         console.warn(`Extraction attempt ${attempt} received non-JSON payload (${response.status}):`, rawText.slice(0, 200));
         
         const isHtml = rawText.trim().startsWith('<') || rawText.toLowerCase().includes('<!doctype');
-        const isTransientStatus = response.status >= 500 && response.status <= 504;
+        const isTransientStatus = (response.status >= 500 && response.status <= 504) || response.status === 404 || response.status === 502;
 
         if ((isHtml || isTransientStatus) && attempt < maxAttempts) {
-          const waitTime = attempt * 2500;
-          console.warn(`Transient HTML/Gateway response on attempt ${attempt}, retrying in ${waitTime}ms...`);
+          const waitTime = attempt * 2000;
+          console.warn(`Transient HTML/Gateway response on attempt ${attempt} (${response.status}), retrying in ${waitTime}ms...`);
           await new Promise((resolve) => setTimeout(resolve, waitTime));
           continue;
         }
 
         throw new Error(
           isHtml
-            ? "الخادم يواجه ضغطاً مؤقتاً أو قيد التحديث. يرجى الضغط على زر 'إعادة المحاولة / Retry'."
-            : `استجابة غير متوقعة من الخادم (Status ${response.status}). يرجى إعادة المحاولة.`
+            ? "الخادم قيد التحديث أو يواجه ضغطاً مؤقتاً. يرجى الضغط على زر 'إعادة المحاولة / Retry'."
+            : `استجابة غير متوقعة من الخادم (Status ${response.status}). جاري إعادة الاتصال...`
         );
       }
 
@@ -184,6 +187,8 @@ export async function extractFinancialData(file: File, highPrecision = false): P
 
         const isTransient = 
           (response.status >= 500 && response.status <= 504) || 
+          response.status === 404 ||
+          response.status === 502 ||
           serverError.includes("503") || 
           serverError.includes("high demand") || 
           serverError.includes("Spikes in demand") || 
@@ -192,7 +197,7 @@ export async function extractFinancialData(file: File, highPrecision = false): P
 
         // Transient server statuses or model spikes can be retried
         if (isTransient && attempt < maxAttempts) {
-          const waitTime = attempt * 2500;
+          const waitTime = attempt * 2000;
           console.warn(`Extraction attempt ${attempt} returned transient issue (${response.status}), retrying in ${waitTime}ms...`);
           await new Promise((resolve) => setTimeout(resolve, waitTime));
           continue;
@@ -386,7 +391,19 @@ async function prepareFileForUpload(file: File): Promise<{ base64Data: string; m
   }
 
   const base64Data = await fileToBase64(file);
-  const mimeType = file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+  let mimeType = file.type;
+  if (!mimeType) {
+    const nameLower = (file.name || '').toLowerCase();
+    if (nameLower.endsWith('.pdf')) {
+      mimeType = 'application/pdf';
+    } else if (nameLower.endsWith('.png')) {
+      mimeType = 'image/png';
+    } else if (nameLower.endsWith('.webp')) {
+      mimeType = 'image/webp';
+    } else {
+      mimeType = 'application/pdf';
+    }
+  }
   return { base64Data, mimeType };
 }
 
