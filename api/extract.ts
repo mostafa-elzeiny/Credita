@@ -1,5 +1,5 @@
-import { GoogleGenAI } from "@google/genai";
-import { FINANCIAL_DATA_SCHEMA, SYSTEM_PROMPT, reconcileFinancialData } from "../src/services/extractionPrompt.ts";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import { FINANCIAL_DATA_SCHEMA, SYSTEM_PROMPT, reconcileFinancialData } from "../src/services/extractionPrompt";
 
 export const config = {
   maxDuration: 60,
@@ -11,7 +11,6 @@ export const config = {
 };
 
 export default async function handler(req: any, res: any) {
-  // CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
@@ -52,9 +51,8 @@ export default async function handler(req: any, res: any) {
     });
 
     const modelsToTry = [
+      "gemini-4-hydrogen",
       "gemini-3.1-flash-lite",
-      "gemini-flash-latest",
-      "gemini-3.8-flash"
     ];
 
     let extractedData = null;
@@ -63,26 +61,31 @@ export default async function handler(req: any, res: any) {
     for (let i = 0; i < modelsToTry.length; i++) {
       const model = modelsToTry[i];
       try {
+        const reqConfig: any = {
+          responseMimeType: "application/json",
+          responseSchema: FINANCIAL_DATA_SCHEMA,
+        };
+        if (model === "gemini-4-hydrogen") {
+          reqConfig.thinkingConfig = {
+            thinkingLevel: ThinkingLevel.MEDIUM,
+          };
+        } else {
+          reqConfig.temperature = highPrecision ? 0.0 : 0.05;
+        }
         const response = await ai.models.generateContent({
           model,
-          contents: [
-            {
-              parts: [
-                { text: SYSTEM_PROMPT },
-                {
-                  inlineData: {
-                    data: cleanBase64,
-                    mimeType: cleanMimeType,
-                  },
+          contents: {
+            parts: [
+              { text: SYSTEM_PROMPT },
+              {
+                inlineData: {
+                  data: cleanBase64,
+                  mimeType: cleanMimeType,
                 },
-              ],
-            },
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: FINANCIAL_DATA_SCHEMA,
-            temperature: highPrecision ? 0.0 : 0.05,
+              },
+            ],
           },
+          config: reqConfig,
         });
 
         const text = response.text || "{}";

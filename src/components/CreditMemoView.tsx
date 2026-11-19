@@ -32,12 +32,23 @@ export default function CreditMemoView({
 }: CreditMemoViewProps) {
   const latestYearData = model.yearlyData[model.yearlyData.length - 1] || {} as CalculatedYearData;
   const [copiedMemo, setCopiedMemo] = useState(false);
-  const [analystNotes, setAnalystNotes] = useState<string[]>([
-    `أظهرت الشركة نمواً في الإيرادات لعام ${latestYearData.year} بمعدل ${(latestYearData.revenueGrowthPct || 0).toFixed(1)}% مع استقرار هامش مجمل الربح عند ${(latestYearData.grossMarginPct || 0).toFixed(1)}%.`,
-    `نسبة التداول الحالية ${latestYearData.currentRatio?.toFixed(2)}x مع رأس مال عامل موجب يبلغ ${Math.round((latestYearData.workingCapital || 0) / 1000)} ألف جنيه مما يوفر مصدات سيولة كافية.`,
-    `مستوى الرافعة المالية (الدين إلى حقوق الملكية) عند ${latestYearData.debtToEquity?.toFixed(2)}x يقع ضمن الحدود الائتمانية المقبولة للقطاع.`,
-    `يوصى بالموافقة على التسهيل الائتماني المطلوب مع اشتراط الحفاظ على نسبة تداول لا تقل عن 1.20x ومتابعة دورية للمركز المالي.`
-  ]);
+  const [analystNotes, setAnalystNotes] = useState<string[]>(() => {
+    if (model.creditAnalystAssessment) {
+      return [
+        model.creditAnalystAssessment.executiveSummary,
+        model.creditAnalystAssessment.workingCapitalComment,
+        ...model.creditAnalystAssessment.strengths.slice(0, 2),
+        ...model.creditAnalystAssessment.risksAndRedFlags.slice(0, 2),
+        model.creditAnalystAssessment.facilityRecommendation
+      ];
+    }
+    return [
+      `أظهرت الشركة نمواً في الإيرادات لعام ${latestYearData.year} بمعدل ${(latestYearData.revenueGrowthPct || 0).toFixed(1)}% مع استقرار هامش مجمل الربح عند ${(latestYearData.grossMarginPct || 0).toFixed(1)}%.`,
+      `نسبة التداول الحالية ${latestYearData.currentRatio?.toFixed(2)}x مع رأس مال عامل موجب يبلغ ${Math.round((latestYearData.workingCapital || 0) / 1000)} ألف جنيه مما يوفر مصدات سيولة كافية.`,
+      `مستوى الرافعة المالية (الدين إلى حقوق الملكية) عند ${latestYearData.debtToEquity?.toFixed(2)}x يقع ضمن الحدود الائتمانية المقبولة للقطاع.`,
+      `يوصى بالموافقة على التسهيل الائتماني المطلوب مع اشتراط الحفاظ على نسبة تداول لا تقل عن 1.20x ومتابعة دورية للمركز المالي.`
+    ];
+  });
   const [newNote, setNewNote] = useState('');
 
   const formatNum = (val: number | null | undefined, prefix = '') => {
@@ -76,12 +87,16 @@ export default function CreditMemoView({
 - إجمالي حقوق الملكية: ${formatNum(latestYearData.totalEquity)} ألف ${model.currency}
 - رأس المال العامل: ${formatNum(latestYearData.workingCapital)} ألف ${model.currency}
 
-2. نسب السيولة والملاءة المالية:
-- نسبة التداول الحالية (Current Ratio): ${latestYearData.currentRatio?.toFixed(2)}x
-- نسبة السيولة السريعة (Quick Ratio): ${latestYearData.quickRatio?.toFixed(2)}x
-- نسبة الدين إلى حقوق الملكية (Debt/Equity): ${latestYearData.debtToEquity?.toFixed(2)}x
-- العائد على الأصول (ROA): ${latestYearData.roaPct}%
-- العائد على حقوق الملكية (ROE): ${latestYearData.roePct}%
+2. نسب السيولة والمديونية وتغطية خدمة الدين:
+- نسبة التداول الحالية (Current Ratio): ${latestYearData.currentRatio?.toFixed(2) ?? '—'}x
+- نسبة السيولة السريعة (Quick Ratio): ${latestYearData.quickRatio?.toFixed(2) ?? '—'}x
+- تغطية خدمة الدين (DSCR): ${latestYearData.dscr?.toFixed(2) ?? '—'}x
+- صافي الدين إلى الأرباح التشغيلية (Net Debt / EBITDA): ${latestYearData.netDebtToEbitda?.toFixed(2) ?? '—'}x
+- نسبة الدين إلى حقوق الملكية (Debt/Equity): ${latestYearData.debtToEquity?.toFixed(2) ?? '—'}x
+- دورة التحول النقدي (CCC): ${latestYearData.cashConversionCycle !== null ? Math.round(latestYearData.cashConversionCycle) + ' يوم' : '—'} (DSO ${latestYearData.dso ?? '—'} / DIO ${latestYearData.dio ?? '—'} / DPO ${latestYearData.dpo ?? '—'})
+- فجوة تمويل رأس المال العامل: ${formatNum(latestYearData.workingCapitalFundingGap)} ألف ${model.currency}
+- العائد على الأصول (ROA): ${latestYearData.roaPct ?? '—'}%
+- العائد على حقوق الملكية (ROE): ${latestYearData.roePct ?? '—'}%
 
 3. ملاحظات وتوصيات المحلل الائتماني:
 ${analystNotes.map(n => `- ${n}`).join('\n')}
@@ -298,6 +313,42 @@ ${analystNotes.map(n => `- ${n}`).join('\n')}
                   {model.yearlyData.map(d => (
                     <td key={d.year} className="py-3 px-4 text-right font-mono font-bold">
                       {d.roePct ? `${d.roePct}%` : '—'}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">تغطية خدمة الدين (DSCR)</td>
+                  <td className="py-3 px-4 text-slate-400">&ge; 1.25x</td>
+                  <td className="py-3 px-4 text-center font-bold text-emerald-600">
+                    {(latestYearData.dscr || 0) >= 1.5 ? 'قوي جداً' : (latestYearData.dscr || 0) >= 1.2 ? 'مقبول' : 'مضغوط'}
+                  </td>
+                  {model.yearlyData.map(d => (
+                    <td key={d.year} className="py-3 px-4 text-right font-mono font-bold">
+                      {d.dscr !== null ? `${d.dscr.toFixed(2)}x` : '—'}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">صافي الدين / EBITDA</td>
+                  <td className="py-3 px-4 text-slate-400">&le; 2.50x</td>
+                  <td className="py-3 px-4 text-center font-bold text-indigo-600">
+                    {(latestYearData.netDebtToEbitda ?? 99) <= 2.5 ? 'محافظ' : 'مرتفع'}
+                  </td>
+                  {model.yearlyData.map(d => (
+                    <td key={d.year} className="py-3 px-4 text-right font-mono font-bold">
+                      {d.netDebtToEbitda !== null ? `${d.netDebtToEbitda.toFixed(2)}x` : '—'}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">دورة التحول النقدي (CCC Days)</td>
+                  <td className="py-3 px-4 text-slate-400">&lt; 90 يوم</td>
+                  <td className="py-3 px-4 text-center font-bold text-sky-600">
+                    {(latestYearData.cashConversionCycle ?? 0) <= 90 ? 'متوازن' : 'طويل'}
+                  </td>
+                  {model.yearlyData.map(d => (
+                    <td key={d.year} className="py-3 px-4 text-right font-mono font-bold">
+                      {d.cashConversionCycle !== null ? `${Math.round(d.cashConversionCycle)}d` : '—'}
                     </td>
                   ))}
                 </tr>

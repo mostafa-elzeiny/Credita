@@ -30,7 +30,9 @@ import {
   Sun,
   BarChart3,
   Printer,
-  FileSpreadsheet
+  FileSpreadsheet,
+  ShieldCheck,
+  AlertTriangle
 } from 'lucide-react';
 import { utils, writeFile } from 'xlsx';
 import { FinancialData, extractFinancialData, extractFinancialDataBatch } from './services/gemini';
@@ -216,6 +218,8 @@ function FinSpreadApp() {
   const sortedData = useMemo(() => {
     return sortedFiles.map(f => f.data!);
   }, [sortedFiles]);
+
+  const modelSummary = useMemo(() => computeFinancialModel(sortedData), [sortedData]);
 
   const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
   const [isGoogleSigningIn, setIsGoogleSigningIn] = useState(false);
@@ -404,7 +408,7 @@ function FinSpreadApp() {
       
       try {
         const rawData = await extractFinancialData(file.file);
-        const data = recalculateFinancials(rawData);
+        const data = recalculateFinancials(rawData, true);
         const yearStr = data.year?.toString() || 'Unknown';
         setUploadedFiles(prev => prev.map(f => f.id === file.id ? { 
           ...f, 
@@ -505,7 +509,8 @@ function FinSpreadApp() {
     setUploadedFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'extracting', error: undefined } : f));
 
     try {
-      const data = await extractFinancialData(targetFile.file, true);
+      const rawData = await extractFinancialData(targetFile.file, true);
+      const data = recalculateFinancials(rawData, true);
       setUploadedFiles(prev => prev.map(f => f.id === id ? {
         ...f,
         data,
@@ -535,7 +540,7 @@ function FinSpreadApp() {
     return scaledVal < 0 ? `(${formatted})` : formatted;
   };
 
-  const recalculateFinancials = (data: FinancialData): FinancialData => {
+  const recalculateFinancials = (data: FinancialData, preserveExtractedTotals = false): FinancialData => {
     const is = { ...data.incomeStatement };
     const bs = { ...data.balanceSheet };
 
@@ -548,28 +553,75 @@ function FinSpreadApp() {
                            (n(is.interestIncome) + n(is.dividendIncome) + n(is.provDoubtfulRec) + n(is.provisions2) + n(is.fxGL) + n(is.sundryIncomeExpense1));
     is.netProfitAfterTax = n(is.netProfitBeforeTax) - Math.abs(n(is.totalTaxExpense));
     is.npaui = n(is.netProfitAfterTax) - Math.abs(n(is.minorityInterestExpense)) + n(is.saleOfPlant) + n(is.sundryIncomeExpense2);
+    if (preserveExtractedTotals && n(is.otherAdjustment) === 0 && n(bs.otherAdjustments) !== 0) {
+      is.otherAdjustment = n(bs.otherAdjustments);
+    }
     is.totalChange = n(is.npaui) - Math.abs(n(is.prefShareDividends)) - Math.abs(n(is.commonStockDividends)) + n(is.otherAdjustment);
 
-    // Balance Sheet Calculations
-    bs.netReceivables = n(bs.accountsReceivable) - n(bs.lessAllowances);
+    // Balance Sheet Calculations (with safe backfill on initial extraction so totals are never zeroed out)
+    if (preserveExtractedTotals && n(bs.accountsReceivable) === 0 && n(bs.netReceivables) > 0) {
+      bs.accountsReceivable = n(bs.netReceivables) + Math.abs(n(bs.lessAllowances));
+    }
+    bs.netReceivables = n(bs.accountsReceivable) - Math.abs(n(bs.lessAllowances));
+
+    const invSum = n(bs.rawMaterials) + n(bs.workInProgress) + n(bs.finishedGoods) + n(bs.goodsInTransit);
+    if (preserveExtractedTotals && invSum === 0 && n(bs.totalInventory) > 0) {
+      bs.finishedGoods = n(bs.totalInventory);
+    }
     bs.totalInventory = n(bs.rawMaterials) + n(bs.workInProgress) + n(bs.finishedGoods) + n(bs.goodsInTransit);
-    bs.totalCurrentAssets = n(bs.cash) + n(bs.marketableSecurities) + n(bs.marketableSecExcess) + n(bs.netReceivables) + n(bs.totalInventory) + n(bs.advancePayments) + n(bs.nonTradeRec) + n(bs.otherCurrentAssets) + n(bs.dueFromSisterCo1);
+
+    const calcCurrentAssets = n(bs.cash) + n(bs.marketableSecurities) + n(bs.marketableSecExcess) + n(bs.netReceivables) + n(bs.totalInventory) + n(bs.advancePayments) + n(bs.nonTradeRec) + n(bs.otherCurrentAssets) + n(bs.dueFromSisterCo1);
+    bs.totalCurrentAssets = preserveExtractedTotals && calcCurrentAssets === 0 ? n(bs.totalCurrentAssets) : calcCurrentAssets;
+
+    const ppeSum = n(bs.land) + n(bs.buildingImprovement) + n(bs.machineryEquipment) + n(bs.constInProgress);
+    if (preserveExtractedTotals && ppeSum === 0) {
+      if (n(bs.grossPlant) > 0) {
+        bs.machineryEquipment = n(bs.grossPlant);
+      } else if (n(bs.netPpe) > 0) {
+        bs.machineryEquipment = n(bs.netPpe) + Math.abs(n(bs.lessAccumulatedDep));
+      }
+    }
     bs.grossPlant = n(bs.land) + n(bs.buildingImprovement) + n(bs.machineryEquipment) + n(bs.constInProgress);
-    bs.netPpe = n(bs.grossPlant) - n(bs.lessAccumulatedDep);
-    bs.netIntangibles = n(bs.goodwill) + n(bs.otherIntangibleAsset) - n(bs.lessAccumAmortization);
+    bs.netPpe = n(bs.grossPlant) - Math.abs(n(bs.lessAccumulatedDep));
+
+    const intangGross = n(bs.goodwill) + n(bs.otherIntangibleAsset);
+    if (preserveExtractedTotals && intangGross === 0 && n(bs.netIntangibles) > 0) {
+      bs.otherIntangibleAsset = n(bs.netIntangibles) + Math.abs(n(bs.lessAccumAmortization));
+    }
+    bs.netIntangibles = n(bs.goodwill) + n(bs.otherIntangibleAsset) - Math.abs(n(bs.lessAccumAmortization));
+
     bs.totalAssets = n(bs.totalCurrentAssets) + n(bs.netPpe) + n(bs.accountsReceivablesLt) + n(bs.dueFromSisterCo2) + n(bs.otherTangibleAsset) + n(bs.deferredTaxAsset) + n(bs.prepaids) + n(bs.netIntangibles);
 
-    bs.totCurrentLiabilities = n(bs.shortTermBorrowingExisting) + n(bs.shortTermBorrowingNew) + n(bs.cpSeniorDebtExisting) + n(bs.cpSeniorDebtNew) + n(bs.cpCapLease) + n(bs.cpSubDebtExisting) + n(bs.cpSalesTax) + n(bs.accountsPayable) + n(bs.taxesPayable) + n(bs.accruedExpenses) + n(bs.interestPayable) + n(bs.dividendsPayable) + n(bs.downPayments) + n(bs.dueToSisterCo3) + n(bs.otherCurrentLiability);
-    bs.totalLongTermDebt = n(bs.ltLeaseObligation) + n(bs.ltSeniorDebtExisting) + n(bs.ltSeniorDebtNew) + n(bs.ltTaxes) + n(bs.ltSharholderLoan);
+    const calcCurrentLiabs = n(bs.shortTermBorrowingExisting) + n(bs.shortTermBorrowingNew) + n(bs.cpSeniorDebtExisting) + n(bs.cpSeniorDebtNew) + n(bs.cpCapLease) + n(bs.cpSubDebtExisting) + n(bs.cpSalesTax) + n(bs.accountsPayable) + n(bs.taxesPayable) + n(bs.accruedExpenses) + n(bs.interestPayable) + n(bs.dividendsPayable) + n(bs.downPayments) + n(bs.dueToSisterCo3) + n(bs.otherCurrentLiability);
+    if (preserveExtractedTotals && calcCurrentLiabs === 0 && n(bs.totCurrentLiabilities) > 0) {
+      bs.otherCurrentLiability = n(bs.totCurrentLiabilities);
+      bs.totCurrentLiabilities = n(bs.totCurrentLiabilities);
+    } else {
+      bs.totCurrentLiabilities = calcCurrentLiabs;
+    }
+
+    const calcLtDebt = n(bs.ltLeaseObligation) + n(bs.ltSeniorDebtExisting) + n(bs.ltSeniorDebtNew) + n(bs.ltTaxes) + n(bs.ltSharholderLoan);
+    if (preserveExtractedTotals && calcLtDebt === 0 && n(bs.totalLongTermDebt) > 0) {
+      bs.ltSeniorDebtExisting = n(bs.totalLongTermDebt);
+      bs.totalLongTermDebt = n(bs.totalLongTermDebt);
+    } else {
+      bs.totalLongTermDebt = calcLtDebt;
+    }
+
     bs.totalLiabilities = n(bs.totCurrentLiabilities) + n(bs.totalLongTermDebt) + n(bs.otherNonCurrentLiab);
-    
     bs.totalGreyArea = n(bs.deferredTaxes) + n(bs.minorityInterest) + n(bs.provisions3);
     
     // Link Net Income to NPAUI
     bs.plusNetIncome = is.npaui;
     // Link Dividends to Pref + Common Dividends
-    bs.lessDividends = n(is.prefShareDividends) + n(is.commonStockDividends);
-    
+    bs.lessDividends = Math.abs(n(is.prefShareDividends)) + Math.abs(n(is.commonStockDividends));
+    if (preserveExtractedTotals && n(bs.otherAdjustments) === 0 && n(is.otherAdjustment) !== 0) {
+      bs.otherAdjustments = n(is.otherAdjustment);
+    }
+
+    if (preserveExtractedTotals && n(bs.retainedEarningsOpening) === 0 && n(bs.retainedEarningsClosing) !== 0) {
+      bs.retainedEarningsOpening = n(bs.retainedEarningsClosing) - n(bs.plusNetIncome) + n(bs.lessDividends) - n(bs.otherAdjustments);
+    }
     bs.retainedEarningsClosing = n(bs.retainedEarningsOpening) + n(bs.plusNetIncome) - n(bs.lessDividends) + n(bs.otherAdjustments);
     bs.totalEquity = n(bs.preferredStock) + n(bs.commonStock) + n(bs.additionalPaidInCapital) + n(bs.retainedEarningsClosing) + n(bs.ownersAccount) + n(bs.fxAdjustment) + n(bs.legalReserve);
     bs.totalLiabsAndEquity = n(bs.totalLiabilities) + n(bs.totalGreyArea) + n(bs.totalEquity);
@@ -1606,6 +1658,120 @@ function FinSpreadApp() {
                 </div>
               )}
 
+              {/* Bank Credit Risk Analyst Underwriting Summary Card */}
+              {modelSummary.yearlyData.length > 0 && modelSummary.creditAnalystAssessment && (() => {
+                const latestY = modelSummary.yearlyData[modelSummary.yearlyData.length - 1];
+                const ca = modelSummary.creditAnalystAssessment!;
+                const ratingBadge =
+                  ca.overallRating === 'Prime / Investment Grade'
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                    : ca.overallRating === 'Acceptable Bankable'
+                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                    : ca.overallRating === 'Watchlist / Caution'
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                    : 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 border-red-200 dark:border-red-800';
+
+                return (
+                  <section className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-5 print:hidden">
+                    <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl flex items-center justify-center">
+                          <ShieldCheck className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                            Credit Risk Analyst Assessment — FY {latestY.year}
+                          </h3>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Corporate Banking Spreading Logic • Score {latestY.creditHealthScore}/100 ({latestY.creditRiskTier})
+                          </p>
+                        </div>
+                      </div>
+                      <span className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border ${ratingBadge}`}>
+                        {ca.overallRating}
+                      </span>
+                    </div>
+
+                    <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
+                      {ca.executiveSummary}
+                    </p>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold">DSCR</div>
+                        <div className="text-lg font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                          {latestY.dscr !== null ? `${latestY.dscr.toFixed(2)}x` : 'N/A'}
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold">Net Debt / EBITDA</div>
+                        <div className="text-lg font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                          {latestY.netDebtToEbitda !== null ? `${latestY.netDebtToEbitda.toFixed(2)}x` : 'N/A'}
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold">Current Ratio</div>
+                        <div className="text-lg font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                          {latestY.currentRatio !== null ? `${latestY.currentRatio.toFixed(2)}x` : 'N/A'}
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold">Debt / Equity</div>
+                        <div className="text-lg font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                          {latestY.debtToEquity !== null ? `${latestY.debtToEquity.toFixed(2)}x` : 'N/A'}
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold">Cash Cycle (CCC)</div>
+                        <div className="text-lg font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                          {latestY.cashConversionCycle !== null ? `${Math.round(latestY.cashConversionCycle)}d` : 'N/A'}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          DSO {latestY.dso !== null ? Math.round(latestY.dso) : '—'} / DIO {latestY.dio !== null ? Math.round(latestY.dio) : '—'} / DPO {latestY.dpo !== null ? Math.round(latestY.dpo) : '—'}
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold">W/C Funding Gap</div>
+                        <div className="text-lg font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                          {formatCurrency(latestY.workingCapitalFundingGap)}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">LE 000's</div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40">
+                        <div className="flex items-center gap-2 text-xs font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider mb-2">
+                          <CheckCircle2 className="w-4 h-4" />
+                          Credit Strengths
+                        </div>
+                        <ul className="space-y-1.5 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                          {ca.strengths.slice(0, 4).map((s, idx) => (
+                            <li key={idx}>• {s}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="p-4 rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40">
+                        <div className="flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wider mb-2">
+                          <AlertTriangle className="w-4 h-4" />
+                          Credit Risks & Diligence Flags
+                        </div>
+                        <ul className="space-y-1.5 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                          {ca.risksAndRedFlags.slice(0, 4).map((r, idx) => (
+                            <li key={idx}>• {r}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/40 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                      <span className="font-bold text-indigo-800 dark:text-indigo-300">Facility Structuring Guidance: </span>
+                      {ca.facilityRecommendation}
+                    </div>
+                  </section>
+                );
+              })()}
+
               <div className={`space-y-12 ${showWebDashboard ? 'print:hidden' : ''}`}>
                 {/* Income Statement */}
                 <section>
@@ -1671,6 +1837,7 @@ function FinSpreadApp() {
                           isEditable
                           fileIds={sortedFiles.map(f => f.id)}
                           onValueChange={(id, val) => handleValueChange(id, 'incomeStatement', 'sgaExpense', val)}
+                          notes={sortedData.map(d => d.notes?.sgaExpense || '')}
                         />
                         <TableRow 
                           label="PROVISIONS" 
@@ -1717,6 +1884,7 @@ function FinSpreadApp() {
                           isEditable
                           fileIds={sortedFiles.map(f => f.id)}
                           onValueChange={(id, val) => handleValueChange(id, 'incomeStatement', 'grossInterestExpExist', val)}
+                          notes={sortedData.map(d => d.notes?.grossInterestExpExist || '')}
                         />
                         <TableRow 
                           label="INTEREST EXP--NEW" 
@@ -1834,6 +2002,7 @@ function FinSpreadApp() {
                           isEditable
                           fileIds={sortedFiles.map(f => f.id)}
                           onValueChange={(id, val) => handleValueChange(id, 'incomeStatement', 'otherAdjustment', val)}
+                          notes={sortedData.map(d => d.notes?.otherAdjustment || d.notes?.otherAdjustments || '')}
                         />
                         <TableRow label="TOTAL CHANGE IN R/E" values={sortedData.map(d => d.incomeStatement.totalChange)} format={formatCurrency} isBold isHighlight />
                       </tbody>
@@ -1964,6 +2133,7 @@ function FinSpreadApp() {
                           isEditable
                           fileIds={sortedFiles.map(f => f.id)}
                           onValueChange={(id, val) => handleValueChange(id, 'balanceSheet', 'otherCurrentAssets', val)}
+                          notes={sortedData.map(d => d.notes?.otherCurrentAssets || '')}
                         />
                         <TableRow 
                           label="DUE FROM SISTER CO." 
@@ -1990,6 +2160,7 @@ function FinSpreadApp() {
                           isEditable
                           fileIds={sortedFiles.map(f => f.id)}
                           onValueChange={(id, val) => handleValueChange(id, 'balanceSheet', 'buildingImprovement', val)}
+                          notes={sortedData.map(d => d.notes?.buildingImprovement || '')}
                         />
                         <TableRow 
                           label="MACHINERY & EQUIPMENT" 
@@ -1998,6 +2169,7 @@ function FinSpreadApp() {
                           isEditable
                           fileIds={sortedFiles.map(f => f.id)}
                           onValueChange={(id, val) => handleValueChange(id, 'balanceSheet', 'machineryEquipment', val)}
+                          notes={sortedData.map(d => d.notes?.machineryEquipment || '')}
                         />
                         <TableRow 
                           label="CONST. IN PROGRESS" 
@@ -2050,6 +2222,7 @@ function FinSpreadApp() {
                           isEditable
                           fileIds={sortedFiles.map(f => f.id)}
                           onValueChange={(id, val) => handleValueChange(id, 'balanceSheet', 'deferredTaxAsset', val)}
+                          notes={sortedData.map(d => d.notes?.deferredTaxAsset || '')}
                         />
                         <TableRow 
                           label="PREPAIDS" 
@@ -2163,6 +2336,7 @@ function FinSpreadApp() {
                           isEditable
                           fileIds={sortedFiles.map(f => f.id)}
                           onValueChange={(id, val) => handleValueChange(id, 'balanceSheet', 'taxesPayable', val)}
+                          notes={sortedData.map(d => d.notes?.taxesPayable || '')}
                         />
                         <TableRow 
                           label="ACCRUED EXPENSES" 
@@ -2171,6 +2345,7 @@ function FinSpreadApp() {
                           isEditable
                           fileIds={sortedFiles.map(f => f.id)}
                           onValueChange={(id, val) => handleValueChange(id, 'balanceSheet', 'accruedExpenses', val)}
+                          notes={sortedData.map(d => d.notes?.accruedExpenses || '')}
                         />
                         <TableRow 
                           label="INTEREST PAYABLE" 
@@ -2374,7 +2549,7 @@ function FinSpreadApp() {
               {/* Floating AI Financial Advisor Copilot */}
               {!showWebDashboard && sortedData.length > 0 && (
                 <DashboardAICopilot
-                  modelSummary={computeFinancialModel(sortedData)}
+                  modelSummary={modelSummary}
                   fullFinancialData={sortedData}
                   isDark={darkMode}
                   onAddCustomChart={() => {

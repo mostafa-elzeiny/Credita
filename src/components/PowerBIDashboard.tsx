@@ -1723,25 +1723,25 @@ export default function PowerBIDashboard({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* 1. Liquidity Indicator */}
                 <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50">
-                  <div className="text-xs font-bold text-slate-500 uppercase mb-1">1. Liquidity Indicator</div>
+                  <div className="text-xs font-bold text-slate-500 uppercase mb-1">1. Liquidity & Cash Cycle</div>
                   <div className="text-base font-bold text-slate-900 dark:text-white flex items-center justify-between">
                     <span>{latestYearData.liquidityStatus} Liquidity</span>
                     <span className="font-mono text-sm">{formatRatio(latestYearData.currentRatio)}</span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    Net Working Capital: {formatNum(latestYearData.workingCapital)}
+                    NWC: {formatNum(latestYearData.workingCapital)} • CCC: {latestYearData.cashConversionCycle !== null ? `${Math.round(latestYearData.cashConversionCycle)}d` : '—'} (W/C Gap {formatNum(latestYearData.workingCapitalFundingGap)})
                   </p>
                 </div>
 
                 {/* 2. Leverage Indicator */}
                 <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50">
-                  <div className="text-xs font-bold text-slate-500 uppercase mb-1">2. Leverage Indicator</div>
+                  <div className="text-xs font-bold text-slate-500 uppercase mb-1">2. Leverage & Gearing</div>
                   <div className="text-base font-bold text-slate-900 dark:text-white flex items-center justify-between">
                     <span>{latestYearData.solvencyStatus} Solvency</span>
                     <span className="font-mono text-sm">{formatRatio(latestYearData.debtToEquity)} D/E</span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    Total Debt: {formatNum(latestYearData.totalDebt)} vs Equity {formatNum(latestYearData.totalEquity)}
+                    Net Debt/EBITDA: {formatRatio(latestYearData.netDebtToEbitda)} • Debt {formatNum(latestYearData.totalDebt)} vs Equity {formatNum(latestYearData.totalEquity)}
                   </p>
                 </div>
 
@@ -1759,13 +1759,13 @@ export default function PowerBIDashboard({
 
                 {/* 4. Debt Servicing Buffer */}
                 <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50">
-                  <div className="text-xs font-bold text-slate-500 uppercase mb-1">4. Net Debt Burden</div>
+                  <div className="text-xs font-bold text-slate-500 uppercase mb-1">4. Debt Service & Coverage</div>
                   <div className="text-base font-bold text-slate-900 dark:text-white flex items-center justify-between">
-                    <span>Net Debt</span>
-                    <span className="font-mono text-sm">{formatNum(latestYearData.netDebt)}</span>
+                    <span>DSCR / Net Debt</span>
+                    <span className="font-mono text-sm">{formatRatio(latestYearData.dscr)} • {formatNum(latestYearData.netDebt)}</span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    Cash buffer covers {latestYearData.cash && latestYearData.shortTermDebt ? `${((latestYearData.cash / latestYearData.shortTermDebt) * 100).toFixed(0)}%` : '—'} of short-term debt
+                    ICR: {formatRatio(latestYearData.interestCoverage)} • Cash covers {latestYearData.cash && latestYearData.shortTermDebt ? `${((latestYearData.cash / latestYearData.shortTermDebt) * 100).toFixed(0)}%` : '—'} of ST debt
                   </p>
                 </div>
               </div>

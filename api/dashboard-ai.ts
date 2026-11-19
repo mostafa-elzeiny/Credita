@@ -23,7 +23,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { message, modelSummary, fullFinancialData = [], history = [] } = req.body || {};
+    const { message, modelSummary, fullFinancialData = [] } = req.body || {};
     if (!message) {
       return res.status(400).json({ error: "Missing message query" });
     }
@@ -51,15 +51,20 @@ Company: ${cName} (${cCurrency})
 Years: ${modelSummary?.years?.join(', ') || 'N/A'}
 
 EXTRACTED FINANCIAL STATEMENTS:
-${JSON.stringify((fullFinancialData && fullFinancialData.length > 0 ? fullFinancialData : modelSummary?.yearlyData || []).slice(0, 4), null, 2)}
+${JSON.stringify((fullFinancialData && fullFinancialData.length > 0 ? fullFinancialData : modelSummary?.yearlyData || []).slice(0, 5), null, 2)}
 
-KEY RATIOS:
-${JSON.stringify((modelSummary?.yearlyData || []).slice(0, 4), null, 2)}
+KEY RATIOS & CREDIT RISK ASSESSMENT:
+${JSON.stringify({ yearlyData: (modelSummary?.yearlyData || []).slice(0, 5), creditAnalystAssessment: modelSummary?.creditAnalystAssessment || null }, null, 2)}
 
 User Question: "${message}"
 
-Respond with authoritative financial advice, exact figures from the data, and step-by-step arithmetic when asked to compute or simulate. If asked in Arabic or Franco-Arabic, respond in professional Egyptian Arabic.
-Return clean JSON with schema:
+DIRECTIVES:
+- Provide authoritative banking, working capital financing (Overdraft, LCs/LGs), and financial leasing advice.
+- State EXACT numbers from the extracted financial statements & notes (with year & currency) and show step-by-step arithmetic for any requested calculation or simulation.
+- If asked in Arabic or Franco-Arabic / Arabizi, respond in fluent, professional Egyptian Arabic.
+- If the user asks for a chart/graph/comparison, return a "chart" object with chartType ("bar"|"line"|"area"|"donut"|"table"), metricKeys strictly from ["revenues","cogs","grossProfit","sgaExpense","ebitda","netOperatingProfit","netProfitAfterTax","cash","netReceivables","totalInventory","totalCurrentAssets","netPpe","totalAssets","shortTermDebt","accountsPayable","totCurrentLiabilities","totalLongTermDebt","totalDebt","netDebt","totalLiabilities","totalEquity","workingCapital","workingCapitalFundingGap","currentRatio","quickRatio","debtToEquity","netDebtToEbitda","dscr","interestCoverage","dso","dio","dpo","cashConversionCycle","grossMarginPct","ebitdaMarginPct","netMarginPct","roePct","roaPct","creditHealthScore"], metricLabels, unit ("currency"|"percent"|"ratio"), title, description, insight; otherwise set "chart": null.
+
+Return strictly valid JSON:
 {
   "reply": "detailed markdown response",
   "creditMemoBullets": ["bullet 1", "bullet 2"],
@@ -67,17 +72,31 @@ Return clean JSON with schema:
 }
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
+    const models = ["gemini-4-hydrogen", "gemini-3.1-flash-lite"];
+    let parsed: any = null;
+    let lastErr: any = null;
 
-    const text = response.text || "{}";
-    const data = JSON.parse(text);
-    return res.status(200).json({ success: true, data });
+    for (const model of models) {
+      try {
+        const cfg: any = { responseMimeType: "application/json" };
+        if (model !== "gemini-4-hydrogen") cfg.temperature = 0.1;
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: cfg,
+        });
+        parsed = JSON.parse(response.text || "{}");
+        if (parsed) break;
+      } catch (err: any) {
+        lastErr = err;
+        console.warn(`Vercel dashboard-ai ${model} failed:`, err?.message || err);
+      }
+    }
+
+    if (!parsed) {
+      throw lastErr || new Error("AI consultation failed");
+    }
+    return res.status(200).json({ success: true, ...parsed });
   } catch (err: any) {
     console.error("Dashboard AI error:", err);
     return res.status(500).json({ error: err?.message || "AI consultation failed" });
