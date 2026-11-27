@@ -1,5 +1,4 @@
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
-import { FINANCIAL_DATA_SCHEMA, SYSTEM_PROMPT, reconcileFinancialData } from "../src/services/extractionPrompt.mjs";
+import { runGeminiExtraction } from "../src/services/serverExtractor.mjs";
 
 export const config = {
   maxDuration: 60,
@@ -10,111 +9,111 @@ export const config = {
   },
 };
 
+function sendJson(res: any, status: number, payload: Record<string, any>) {
+  try {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    return res.status(status).json(payload);
+  } catch (_) {
+    try {
+      res.statusCode = status;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify(payload));
+    } catch (_) {}
+  }
+}
+
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
   if (req.method === "GET") {
-    return res.status(200).json({ status: "ok", message: "Credita Financial Extraction API (Vercel Serverless)" });
+    return sendJson(res, 200, {
+      status: "ok",
+      message: "Credita Financial Extraction API (Vercel Serverless)",
+    });
   }
 
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return sendJson(res, 405, {
+      success: false,
+      code: "METHOD_NOT_ALLOWED",
+      error: "Method not allowed",
+      errorAr: "طريقة الطلب غير مدعومة.",
+    });
   }
 
   try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    const { base64Data, mimeType, highPrecision } = body;
-    if (!base64Data) {
-      return res.status(400).json({ error: "Missing base64Data in request payload" });
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || process.env.API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({
-        error: "GEMINI_API_KEY is missing on Vercel. Please add GEMINI_API_KEY in Vercel Project Settings > Environment Variables."
+    let body: any = {};
+    try {
+      body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    } catch (_) {
+      return sendJson(res, 400, {
+        success: false,
+        code: "INVALID_JSON_BODY",
+        error: "Invalid JSON payload received by /api/extract.",
+        errorAr: "صيغة الطلب المرسل غير صالحة (JSON غير صحيح).",
       });
     }
 
-    const cleanBase64 = base64Data.includes(",") ? base64Data.split(",")[1] : base64Data;
-    const cleanMimeType = mimeType || "application/pdf";
+    const {
+      base64Data,
+      mimeType,
+      highPrecision,
+      mode,
+      targetSection,
+      failingChecks,
+      currentData,
+      targetPagesHint,
+    } = body;
 
-    const ai = new GoogleGenAI({
+    if (!base64Data || typeof base64Data !== "string") {
+      return sendJson(res, 400, {
+        success: false,
+        code: "MISSING_FILE_DATA",
+        error: "Missing base64Data in request payload.",
+        errorAr: "بيانات الملف مفقودة في الطلب.",
+      });
+    }
+
+    const apiKey =
+      process.env.GEMINI_API_KEY ||
+      process.env.VITE_GEMINI_API_KEY ||
+      process.env.API_KEY;
+
+    const result = await runGeminiExtraction({
       apiKey,
-      httpOptions: {
-        headers: { "User-Agent": "aistudio-build" },
-      },
+      base64Data,
+      mimeType: mimeType || "application/pdf",
+      highPrecision: Boolean(highPrecision),
+      mode: mode || "full",
+      targetSection: targetSection || null,
+      failingChecks: Array.isArray(failingChecks) ? failingChecks : [],
+      currentData: currentData || null,
+      targetPagesHint: Array.isArray(targetPagesHint) ? targetPagesHint : [],
+      isVercel: true,
     });
 
-    // On Vercel (60s hard serverless ceiling), prioritize completing before gateway timeout:
-    // 1) Try gemini-4-hydrogen with ThinkingLevel.LOW and a 38s race timeout
-    // 2) Fall back to high-speed gemini-3.1-flash-lite if hydrogen approaches Vercel's 60s limit
-    const attempts = [
-      { model: "gemini-4-hydrogen", timeoutMs: 38000 },
-      { model: "gemini-3.1-flash-lite", timeoutMs: 20000 },
-    ];
-
-    let extractedData = null;
-    let lastErr: any = null;
-
-    for (let i = 0; i < attempts.length; i++) {
-      const { model, timeoutMs } = attempts[i];
-      try {
-        const reqConfig: any = {
-          responseMimeType: "application/json",
-          responseSchema: FINANCIAL_DATA_SCHEMA,
-        };
-        if (model === "gemini-4-hydrogen") {
-          reqConfig.thinkingConfig = {
-            thinkingLevel: ThinkingLevel.LOW,
-          };
-        } else {
-          reqConfig.temperature = highPrecision ? 0.0 : 0.05;
-        }
-
-        const response = await Promise.race([
-          ai.models.generateContent({
-            model,
-            contents: {
-              parts: [
-                { text: SYSTEM_PROMPT },
-                {
-                  inlineData: {
-                    data: cleanBase64,
-                    mimeType: cleanMimeType,
-                  },
-                },
-              ],
-            },
-            config: reqConfig,
-          }),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error(`${model} exceeded ${timeoutMs}ms budget`)), timeoutMs)
-          ),
-        ]) as any;
-
-        const text = response?.text || "{}";
-        extractedData = JSON.parse(text);
-        if (extractedData) break;
-      } catch (err: any) {
-        lastErr = err;
-        console.warn(`Vercel function model ${model} failed:`, err?.message || err);
-      }
-    }
-
-    if (!extractedData) {
-      throw lastErr || new Error("Extraction failed with all models");
-    }
-
-    const reconciled = reconcileFinancialData(extractedData);
-    return res.status(200).json({ success: true, data: reconciled });
+    return sendJson(res, 200, {
+      success: true,
+      mode: result.mode,
+      modelUsed: result.modelUsed,
+      attemptsMade: result.attemptsMade,
+      data: result.data,
+    });
   } catch (error: any) {
     console.error("Vercel extraction function error:", error);
-    return res.status(500).json({ error: error?.message || "Server extraction error" });
+    const status = error?.httpStatus || 500;
+    return sendJson(res, status, {
+      success: false,
+      code: error?.code || "EXTRACTION_FAILED",
+      error: error?.userMessageEn || error?.message || "Server extraction error",
+      errorAr: error?.userMessageAr || "حدث خطأ أثناء معالجة المستند على الخادم. يرجى إعادة المحاولة.",
+    });
   }
 }

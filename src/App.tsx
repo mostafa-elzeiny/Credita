@@ -35,7 +35,8 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { utils, writeFile } from 'xlsx';
-import { FinancialData, extractFinancialData, extractFinancialDataBatch } from './services/gemini';
+import { FinancialData, ExtractionProgress, extractFinancialData, extractFinancialDataBatch } from './services/gemini';
+import { validateFinancialData } from './services/extractionValidation';
 import { computeFinancialModel } from './services/financialModel';
 import { generatePowerBiExcelWorkbook } from './services/powerBiGenerator';
 import PowerBIDashboard from './components/PowerBIDashboard';
@@ -63,7 +64,7 @@ import {
   setDocument,
   getDocument
 } from './services/firestoreService';
-import { Timestamp, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { Timestamp, collection, query, orderBy, onSnapshot, doc, getDoc, setDoc } from 'firebase/firestore';
 import ErrorBoundary from './components/ErrorBoundary';
 
 declare global {
@@ -84,6 +85,10 @@ interface UploadedFile {
   status: 'idle' | 'extracting' | 'success' | 'error';
   data?: FinancialData;
   error?: string;
+  progress?: {
+    percent: number;
+    message: string;
+  };
 }
 
 export default function App() {
@@ -119,6 +124,7 @@ function FinSpreadApp() {
   const [contactSuccess, setContactSuccess] = useState(false);
   const [supportMessages, setSupportMessages] = useState<any[]>([]);
   const [loadingMessage, setLoadingMessage] = useState('Initializing extraction...');
+  const [loadingPercent, setLoadingPercent] = useState(12);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isUpdatePasswordOpen, setIsUpdatePasswordOpen] = useState(false);
   const [newPassword, setNewPassword] = useState('');
@@ -185,20 +191,39 @@ function FinSpreadApp() {
 
   // Auth Listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       setIsAuthLoading(false);
-      
-      if (currentUser) {
-        // Sync user profile to Firestore
-        setDocument('users', currentUser.uid, {
-          uid: currentUser.uid,
-          email: currentUser.email,
-          displayName: currentUser.displayName,
-          role: isAdmin ? 'admin' : 'user',
-          plan: isAdmin ? 'architect' : (isCompanyUser ? 'company' : 'free'),
-          updatedAt: Timestamp.now()
-        }).catch(console.error);
+
+      if (currentUser && currentUser.email) {
+        try {
+          const currentIsAdmin = currentUser.email === 'mostafa.elzeiny11@gmail.com';
+          const currentIsCompany = Boolean(currentUser.emailVerified || currentIsAdmin);
+          const userRef = doc(db, 'users', currentUser.uid);
+          const existingSnap = await getDoc(userRef).catch(() => null);
+          const existingData = existingSnap?.exists() ? existingSnap.data() : null;
+          const preservedRole = currentIsAdmin
+            ? 'admin'
+            : existingData?.role === 'admin'
+              ? 'admin'
+              : 'user';
+
+          const payload: Record<string, any> = {
+            uid: currentUser.uid,
+            email: currentUser.email,
+            displayName: currentUser.displayName ?? null,
+            role: preservedRole,
+            plan: currentIsAdmin ? 'architect' : (currentIsCompany ? 'company' : 'free'),
+            updatedAt: Timestamp.now(),
+            createdAt: existingData?.createdAt ?? Timestamp.now(),
+          };
+          if (existingData?.dailyUsage !== undefined) {
+            payload.dailyUsage = existingData.dailyUsage;
+          }
+          await setDoc(userRef, payload, { merge: true });
+        } catch {
+          // Ignore transient offline or storage errors during background profile sync
+        }
       }
     });
     return () => unsubscribe();
@@ -224,9 +249,19 @@ function FinSpreadApp() {
   const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
   const [isGoogleSigningIn, setIsGoogleSigningIn] = useState(false);
 
-  // Check for redirect result from Google sign-in (especially on mobile browsers)
+  // Check for redirect result from Google sign-in only when a redirect was explicitly initiated
   useEffect(() => {
     let isMounted = true;
+    const hasPendingRedirect =
+      typeof sessionStorage !== 'undefined' &&
+      sessionStorage.getItem('credita_auth_redirect_pending') === '1';
+
+    if (!hasPendingRedirect) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
     getRedirectResult(auth)
       .then((result) => {
         if (!isMounted) return;
@@ -236,15 +271,21 @@ function FinSpreadApp() {
       })
       .catch((error: any) => {
         if (!isMounted) return;
-        console.error("Redirect sign-in error:", error);
-        if (error.code === 'auth/unauthorized-domain') {
+        if (error?.code === 'auth/unauthorized-domain') {
           const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
           setGoogleAuthError(`This domain (${currentHost}) is not authorized in Firebase. Add it to Firebase Console > Authentication > Settings > Authorized domains.`);
-        } else if (error.code !== 'auth/popup-closed-by-user') {
+        } else if (
+          error?.code &&
+          error.code !== 'auth/popup-closed-by-user' &&
+          error.code !== 'auth/no-auth-event'
+        ) {
           setGoogleAuthError(error.message || "Failed to complete Google Sign-In.");
         }
       })
       .finally(() => {
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem('credita_auth_redirect_pending');
+        }
         if (isMounted) {
           setIsAuthLoading(false);
         }
@@ -270,9 +311,15 @@ function FinSpreadApp() {
 
     if (shouldUseRedirect) {
       try {
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.setItem('credita_auth_redirect_pending', '1');
+        }
         await signInWithRedirect(auth, googleProvider);
         return;
       } catch (redirectError: any) {
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem('credita_auth_redirect_pending');
+        }
         console.warn("signInWithRedirect failed, attempting popup fallback:", redirectError);
         // Fall through to try popup if redirect threw an error
       }
@@ -286,9 +333,15 @@ function FinSpreadApp() {
         if (!isInIframe) {
           // If popup is blocked on mobile, seamlessly try redirect
           try {
+            if (typeof sessionStorage !== 'undefined') {
+              sessionStorage.setItem('credita_auth_redirect_pending', '1');
+            }
             await signInWithRedirect(auth, googleProvider);
             return;
           } catch (rErr: any) {
+            if (typeof sessionStorage !== 'undefined') {
+              sessionStorage.removeItem('credita_auth_redirect_pending');
+            }
             setGoogleAuthError("Pop-up blocked. Tap below to use direct redirect sign-in.");
           }
         } else {
@@ -378,21 +431,8 @@ function FinSpreadApp() {
 
     setStep('review');
     setIsProcessing(true);
-    
-    const messages = [
-      'Scanning document structure...',
-      'Identifying financial tables...',
-      'Extracting Income Statement data...',
-      'Mapping Balance Sheet items...',
-      'Calculating totals and verifying accuracy...',
-      'Finalizing data spread...'
-    ];
-    
-    let msgIndex = 0;
-    const interval = setInterval(() => {
-      msgIndex = (msgIndex + 1) % messages.length;
-      setLoadingMessage(messages[msgIndex]);
-    }, 4000);
+    setLoadingPercent(8);
+    setLoadingMessage('Preparing document for analysis... / جاري تجهيز المستند...');
 
     const idleFiles = uploadedFiles.filter(f => f.status === 'idle');
     const results: { fileId: string; success: boolean; data?: FinancialData; year?: string }[] = [];
@@ -404,10 +444,25 @@ function FinSpreadApp() {
         await new Promise(resolve => setTimeout(resolve, 1200));
       }
       
-      setUploadedFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'extracting', error: undefined } : f));
+      setUploadedFiles(prev => prev.map(f => f.id === file.id ? {
+        ...f,
+        status: 'extracting',
+        error: undefined,
+        progress: { percent: 10, message: 'Preparing PDF / جاري التجهيز...' }
+      } : f));
       
       try {
-        const rawData = await extractFinancialData(file.file);
+        const handleProgress = (p: ExtractionProgress) => {
+          const combinedMsg = `${p.messageEn} • ${p.messageAr}`;
+          setLoadingPercent(p.percent);
+          setLoadingMessage(combinedMsg);
+          setUploadedFiles(prev => prev.map(f => f.id === file.id ? {
+            ...f,
+            progress: { percent: p.percent, message: combinedMsg }
+          } : f));
+        };
+
+        const rawData = await extractFinancialData(file.file, false, handleProgress);
         const data = recalculateFinancials(rawData, true);
         const yearStr = data.year?.toString() || 'Unknown';
         setUploadedFiles(prev => prev.map(f => f.id === file.id ? { 
@@ -415,7 +470,8 @@ function FinSpreadApp() {
           data, 
           year: yearStr, 
           status: 'success',
-          error: undefined 
+          error: undefined,
+          progress: undefined
         } : f));
         results.push({ fileId: file.id, success: true, data, year: yearStr });
       } catch (err) {
@@ -423,13 +479,13 @@ function FinSpreadApp() {
         setUploadedFiles(prev => prev.map(f => f.id === file.id ? { 
           ...f, 
           status: 'error', 
-          error: errMsg 
+          error: errMsg,
+          progress: undefined
         } : f));
         results.push({ fileId: file.id, success: false });
       }
     }
 
-    clearInterval(interval);
     setIsProcessing(false);
 
     const successfulItems = results.filter(r => r.success && r.data);
@@ -506,23 +562,37 @@ function FinSpreadApp() {
     const targetFile = uploadedFiles.find(f => f.id === id);
     if (!targetFile) return;
 
-    setUploadedFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'extracting', error: undefined } : f));
+    setUploadedFiles(prev => prev.map(f => f.id === id ? {
+      ...f,
+      status: 'extracting',
+      error: undefined,
+      progress: { percent: 10, message: 'High-precision re-extraction starting...' }
+    } : f));
 
     try {
-      const rawData = await extractFinancialData(targetFile.file, true);
+      const handleProgress = (p: ExtractionProgress) => {
+        const combinedMsg = `${p.messageEn} • ${p.messageAr}`;
+        setUploadedFiles(prev => prev.map(f => f.id === id ? {
+          ...f,
+          progress: { percent: p.percent, message: combinedMsg }
+        } : f));
+      };
+      const rawData = await extractFinancialData(targetFile.file, true, handleProgress);
       const data = recalculateFinancials(rawData, true);
       setUploadedFiles(prev => prev.map(f => f.id === id ? {
         ...f,
         data,
         year: data.year?.toString() || 'Unknown',
         status: 'success',
-        error: undefined
+        error: undefined,
+        progress: undefined
       } : f));
     } catch (err) {
       setUploadedFiles(prev => prev.map(f => f.id === id ? {
         ...f,
         status: 'error',
-        error: err instanceof Error ? err.message : 'Extraction failed'
+        error: err instanceof Error ? err.message : 'Extraction failed',
+        progress: undefined
       } : f));
     }
   };
@@ -626,7 +696,14 @@ function FinSpreadApp() {
     bs.totalEquity = n(bs.preferredStock) + n(bs.commonStock) + n(bs.additionalPaidInCapital) + n(bs.retainedEarningsClosing) + n(bs.ownersAccount) + n(bs.fxAdjustment) + n(bs.legalReserve);
     bs.totalLiabsAndEquity = n(bs.totalLiabilities) + n(bs.totalGreyArea) + n(bs.totalEquity);
 
-    return { ...data, incomeStatement: is, balanceSheet: bs };
+    const updatedData: FinancialData = { ...data, incomeStatement: is, balanceSheet: bs };
+    const refreshedValidation = validateFinancialData(updatedData);
+    if (data.validation) {
+      refreshedValidation.pass2Attempted = data.validation.pass2Attempted;
+      refreshedValidation.pass2Improved = data.validation.pass2Improved;
+    }
+    updatedData.validation = refreshedValidation;
+    return updatedData;
   };
 
   const handleValueChange = useCallback((fileId: string, section: 'incomeStatement' | 'balanceSheet', key: string, value: string) => {
@@ -1007,7 +1084,13 @@ function FinSpreadApp() {
   return (
     <AnimatePresence mode="wait">
       {isAuthLoading ? (
-        <div key="loading" className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+        <motion.div
+          key="loading"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4"
+        >
           <div className="flex flex-col items-center gap-4">
             <img 
               src="https://lh3.googleusercontent.com/d/11M23dOt1x49ZRANgrZyhvY0sWL0Y7EQB" 
@@ -1020,7 +1103,7 @@ function FinSpreadApp() {
               <span>Verifying authentication...</span>
             </div>
           </div>
-        </div>
+        </motion.div>
       ) : !user || needsVerification ? (
         <AuthScreen 
           key="auth"
@@ -1029,7 +1112,7 @@ function FinSpreadApp() {
           googleAuthError={googleAuthError}
           onClearGoogleAuthError={() => setGoogleAuthError(null)}
           user={user} 
-          needsVerification={needsVerification} 
+          needsVerification={Boolean(needsVerification)} 
         />
       ) : (
         <motion.div 
@@ -1445,41 +1528,141 @@ function FinSpreadApp() {
               </div>
 
               {isProcessing && (
-                <div className="bg-credita/5 dark:bg-credita/10 border border-credita/10 p-4 rounded-2xl flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-full bg-credita/10 flex items-center justify-center">
-                    <Loader2 className="w-5 h-5 text-credita animate-spin" />
+                <div className="bg-credita/5 dark:bg-credita/10 border border-credita/10 p-4 rounded-2xl space-y-2.5">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-full bg-credita/10 flex items-center justify-center shrink-0">
+                      <Loader2 className="w-5 h-5 text-credita animate-spin" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-credita font-bold text-sm truncate">{loadingMessage}</p>
+                        <span className="text-xs font-mono font-bold text-credita shrink-0">{loadingPercent}%</span>
+                      </div>
+                      <p className="text-slate-500 dark:text-slate-400 text-xs">Processing with verification checks. Large PDFs are automatically split by section.</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-credita font-bold text-sm">{loadingMessage}</p>
-                    <p className="text-slate-500 dark:text-slate-400 text-xs">Processing in progress. This usually takes 30-45 seconds.</p>
+                  <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-credita transition-all duration-300 rounded-full"
+                      style={{ width: `${Math.max(5, Math.min(100, loadingPercent))}%` }}
+                    />
                   </div>
                 </div>
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {uploadedFiles.map((f, index) => (
+                {uploadedFiles.map((f, index) => {
+                  const valSummary = f.data?.validation;
+                  const lowConf = f.data?.lowConfidenceFields || [];
+                  const lowConfKeys = new Set(lowConf.map(lc => lc.field));
+                  const editableItems: Array<{
+                    section: 'incomeStatement' | 'balanceSheet';
+                    key: string;
+                    label: string;
+                    reason?: string;
+                    pageNumber?: number | null;
+                  }> = [];
+
+                  for (const lc of lowConf) {
+                    if (
+                      (lc.statement === 'incomeStatement' || lc.statement === 'balanceSheet') &&
+                      f.data &&
+                      (f.data[lc.statement] as any)?.[lc.field] !== undefined &&
+                      !editableItems.some(e => e.section === lc.statement && e.key === lc.field)
+                    ) {
+                      editableItems.push({
+                        section: lc.statement,
+                        key: lc.field,
+                        label: lc.field,
+                        reason: lc.reason,
+                        pageNumber: lc.pageNumber,
+                      });
+                    }
+                  }
+
+                  // Surface key line items for mismatched sections so users can fix directly in Review before Generate Output
+                  if (valSummary && !valSummary.allPassed && f.data) {
+                    const failingIds = new Set(valSummary.checks.filter(c => !c.passed).map(c => c.id));
+                    const fallbackSuggestions: Array<{ checkIds: string[]; section: 'incomeStatement' | 'balanceSheet'; key: string; label: string }> = [
+                      { checkIds: ['income_statement_flow', 'equity_movement_agreement'], section: 'incomeStatement', key: 'revenues', label: 'Revenues' },
+                      { checkIds: ['income_statement_flow'], section: 'incomeStatement', key: 'costOfGoodsSold', label: 'COGS' },
+                      { checkIds: ['income_statement_flow'], section: 'incomeStatement', key: 'sgaExpense', label: 'G&A / SG&A' },
+                      { checkIds: ['current_assets_sum', 'cash_flow_agreement'], section: 'balanceSheet', key: 'cash', label: 'Cash & Banks' },
+                      { checkIds: ['current_assets_sum', 'total_assets_sum', 'balance_equation'], section: 'balanceSheet', key: 'accountsReceivable', label: 'Receivables' },
+                      { checkIds: ['current_assets_sum', 'total_assets_sum', 'balance_equation'], section: 'balanceSheet', key: 'otherCurrentAssets', label: 'Other Current Assets' },
+                      { checkIds: ['net_ppe_sum', 'total_assets_sum', 'balance_equation'], section: 'balanceSheet', key: 'machineryEquipment', label: 'Machinery & Equip.' },
+                      { checkIds: ['net_ppe_sum', 'total_assets_sum', 'balance_equation'], section: 'balanceSheet', key: 'lessAccumulatedDep', label: 'Accum. Depreciation' },
+                      { checkIds: ['current_liabilities_sum', 'total_le_sum', 'balance_equation'], section: 'balanceSheet', key: 'accountsPayable', label: 'Accounts Payable' },
+                      { checkIds: ['current_liabilities_sum', 'total_le_sum', 'balance_equation'], section: 'balanceSheet', key: 'accruedExpenses', label: 'Accrued Expenses' },
+                      { checkIds: ['total_equity_sum', 'total_le_sum', 'equity_movement_agreement', 'balance_equation'], section: 'balanceSheet', key: 'retainedEarningsOpening', label: 'Retained Earnings (Open)' },
+                    ];
+                    for (const sug of fallbackSuggestions) {
+                      if (
+                        editableItems.length < 6 &&
+                        sug.checkIds.some(id => failingIds.has(id)) &&
+                        !editableItems.some(e => e.section === sug.section && e.key === sug.key)
+                      ) {
+                        editableItems.push({
+                          section: sug.section,
+                          key: sug.key,
+                          label: sug.label,
+                          reason: 'Fix mismatch (LE 000\'s)',
+                        });
+                      }
+                    }
+                  }
+
+                  return (
                   <motion.div 
                     key={f.id}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.1 }}
-                    className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group"
+                    className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group flex flex-col"
                   >
                     <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50 group-hover:bg-credita/5 transition-colors">
                       <div className="flex items-center gap-2">
                         <CheckCircle2 className={`w-5 h-5 ${f.status === 'success' ? 'text-green-500' : 'text-slate-300 dark:text-slate-700'}`} />
                         <span className="font-bold text-slate-800 dark:text-slate-200">FY {f.year || 'Detecting...'}</span>
                       </div>
-                      {f.status === 'error' && (
+                      {f.status === 'error' ? (
                         <div className="flex items-center gap-1 text-red-500 text-xs font-medium">
                           <AlertCircle className="w-3 h-3" />
                           Error
                         </div>
-                      )}
+                      ) : f.status === 'success' && valSummary ? (
+                        <div className={`flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md border ${
+                          valSummary.allPassed
+                            ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                            : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                        }`}>
+                          {valSummary.allPassed ? (
+                            <CheckCircle2 className="w-3 h-3" />
+                          ) : (
+                            <AlertTriangle className="w-3 h-3" />
+                          )}
+                          <span>
+                            {valSummary.allPassed
+                              ? `Verified ${valSummary.passedCount}/${valSummary.passedCount}`
+                              : `${valSummary.failedCount} Mismatch`}
+                          </span>
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="p-6 space-y-4">
+                    <div className="p-6 space-y-4 flex-1">
                       {f.status === 'extracting' ? (
                         <div className="space-y-4">
+                          {f.progress && (
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between text-[11px] text-credita font-semibold">
+                                <span className="truncate">{f.progress.message}</span>
+                                <span className="font-mono ml-2">{f.progress.percent}%</span>
+                              </div>
+                              <div className="w-full h-1 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                                <div className="h-full bg-credita transition-all duration-300" style={{ width: `${f.progress.percent}%` }} />
+                              </div>
+                            </div>
+                          )}
                           <div className="flex justify-between items-center">
                             <Skeleton className="w-20 h-4" />
                             <Skeleton className="w-24 h-4" />
@@ -1522,25 +1705,149 @@ function FinSpreadApp() {
                       ) : (
                         <>
                           <div className="flex justify-between items-center">
-                            <span className="text-slate-500 dark:text-slate-400 text-sm">Revenue</span>
+                            <span className="text-slate-500 dark:text-slate-400 text-sm flex items-center gap-1.5">
+                              Revenue
+                              {lowConfKeys.has('revenues') && (
+                                <span title="Low confidence extracted figure" className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">Low conf.</span>
+                              )}
+                            </span>
                             <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">{f.data ? formatCurrency(f.data.incomeStatement.revenues) : '—'}</span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span className="text-slate-500 dark:text-slate-400 text-sm">COGS</span>
+                            <span className="text-slate-500 dark:text-slate-400 text-sm flex items-center gap-1.5">
+                              COGS
+                              {lowConfKeys.has('costOfGoodsSold') && (
+                                <span title="Low confidence extracted figure" className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">Low conf.</span>
+                              )}
+                            </span>
                             <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">{f.data ? formatCurrency(f.data.incomeStatement.costOfGoodsSold) : '—'}</span>
                           </div>
                           <div className="flex justify-between items-center pt-2 border-t border-slate-50 dark:border-slate-800">
-                            <span className="text-slate-500 dark:text-slate-400 text-sm font-bold">Net Profit</span>
+                            <span className="text-slate-500 dark:text-slate-400 text-sm font-bold flex items-center gap-1.5">
+                              Net Profit
+                              {lowConfKeys.has('netProfitAfterTax') && (
+                                <span title="Low confidence extracted figure" className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">Low conf.</span>
+                              )}
+                            </span>
                             <span className="font-mono font-bold text-green-600 dark:text-green-400">{f.data ? formatCurrency(f.data.incomeStatement.netProfitAfterTax) : '—'}</span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span className="text-slate-500 dark:text-slate-400 text-sm">Total Assets</span>
+                            <span className="text-slate-500 dark:text-slate-400 text-sm flex items-center gap-1.5">
+                              Total Assets
+                              {lowConfKeys.has('totalAssets') && (
+                                <span title="Low confidence extracted figure" className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">Low conf.</span>
+                              )}
+                            </span>
                             <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">{f.data ? formatCurrency(f.data.balanceSheet.totalAssets) : '—'}</span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span className="text-slate-500 dark:text-slate-400 text-sm">Total Equity</span>
+                            <span className="text-slate-500 dark:text-slate-400 text-sm flex items-center gap-1.5">
+                              Total Equity
+                              {lowConfKeys.has('totalEquity') && (
+                                <span title="Low confidence extracted figure" className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">Low conf.</span>
+                              )}
+                            </span>
                             <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">{f.data ? formatCurrency(f.data.balanceSheet.totalEquity) : '—'}</span>
                           </div>
+
+                          {/* Small Accounting Validation & Low-Confidence Review Panel */}
+                          {valSummary && (
+                            <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+                              <div className="flex items-center justify-between text-[11px]">
+                                <span className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1">
+                                  <ShieldCheck className="w-3.5 h-3.5 text-credita" />
+                                  Validation Panel
+                                </span>
+                                <span className="text-slate-400 font-mono">
+                                  {f.data?.unitMetadata?.currency || 'EGP'} • {f.data?.unitMetadata?.originalScale || 'units'}
+                                  {f.data?.extractionMeta?.pass2Attempted ? ' • Pass 2' : ''}
+                                </span>
+                              </div>
+
+                              {/* Passed Checks */}
+                              <div className="space-y-1">
+                                {valSummary.checks.filter(c => c.status === 'passed').map(chk => (
+                                  <div key={chk.id} title={chk.labelAr} className="flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-300">
+                                    <span className="flex items-center gap-1.5 truncate pr-2">
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                      <span className="truncate">{chk.labelEn}</span>
+                                    </span>
+                                    {chk.pageNumber ? (
+                                      <span className="text-[10px] font-mono text-slate-400 shrink-0">p.{chk.pageNumber}</span>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Mismatches with Difference Amount */}
+                              {valSummary.checks.filter(c => c.status === 'mismatch').length > 0 && (
+                                <div className="space-y-1.5 pt-1">
+                                  {valSummary.checks.filter(c => c.status === 'mismatch').map(chk => {
+                                    const diffVal = chk.difference ?? 0;
+                                    const diffFormatted = `${diffVal >= 0 ? '+' : ''}${Math.round(diffVal).toLocaleString('en-US')}`;
+                                    return (
+                                      <div key={chk.id} title={chk.labelAr} className="p-2 rounded-lg bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-[11px] space-y-0.5">
+                                        <div className="flex items-center justify-between gap-2 font-semibold text-amber-800 dark:text-amber-300">
+                                          <span className="flex items-center gap-1 truncate">
+                                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                            <span className="truncate">{chk.labelEn}</span>
+                                          </span>
+                                          {chk.pageNumber ? (
+                                            <span className="text-[10px] font-mono shrink-0">p.{chk.pageNumber}</span>
+                                          ) : null}
+                                        </div>
+                                        <div className="flex items-center justify-between text-[10px] text-amber-700 dark:text-amber-400 font-mono">
+                                          <span>Diff: {diffFormatted} ({chk.pctDiff ?? 0}%)</span>
+                                          <span>Prn: {chk.printedValue !== null ? Math.round(chk.printedValue).toLocaleString('en-US') : '—'}</span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Inline Quick-Fix for Low-Confidence or Mismatched Figures (in LE 000's) */}
+                              {editableItems.length > 0 && f.data && (
+                                <div className="pt-1.5 space-y-1.5">
+                                  <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider flex items-center gap-1">
+                                    <AlertCircle className="w-3 h-3" />
+                                    Review / Fix Figures (000's)
+                                  </div>
+                                  <div className="space-y-1.5 max-h-44 overflow-y-auto pr-0.5">
+                                    {editableItems.map(item => {
+                                      const currentRaw = Number((f.data![item.section] as any)?.[item.key] || 0);
+                                      const currentInK = Math.round(currentRaw / 1000);
+                                      return (
+                                        <div key={`${item.section}.${item.key}`} className="flex items-center justify-between gap-2 text-[11px] bg-slate-50 dark:bg-slate-800/70 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                                          <div className="min-w-0 flex-1">
+                                            <div className="font-semibold text-slate-700 dark:text-slate-200 truncate flex items-center gap-1">
+                                              <span className="truncate">{item.label}</span>
+                                              {lowConfKeys.has(item.key) && (
+                                                <span title="Low confidence extracted figure" className="text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 shrink-0">Low conf.</span>
+                                              )}
+                                              {item.pageNumber ? <span className="font-mono text-[10px] text-slate-400 shrink-0">(p.{item.pageNumber})</span> : null}
+                                            </div>
+                                            {item.reason && (
+                                              <div className="text-[10px] text-amber-600 dark:text-amber-400 truncate" title={item.reason}>
+                                                {item.reason}
+                                              </div>
+                                            )}
+                                          </div>
+                                          <input
+                                            type="number"
+                                            defaultValue={currentInK}
+                                            key={`${f.id}-${item.section}-${item.key}-${currentInK}`}
+                                            onBlur={(e) => handleValueChange(f.id, item.section, item.key, e.target.value)}
+                                            className="w-24 px-2 py-1 text-right font-mono text-xs rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-credita"
+                                          />
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </>
                       )}
                     </div>
@@ -1559,7 +1866,8 @@ function FinSpreadApp() {
                       </button>
                     </div>
                   </motion.div>
-                ))}
+                  );
+                })}
               </div>
             </motion.div>
           )}
@@ -3064,7 +3372,7 @@ function AuthScreen({
 
   if (needsVerification) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
           <div className="bg-white rounded-3xl shadow-xl border border-slate-200 p-8 text-center">
             <div className="w-20 h-20 bg-credita/10 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -3105,7 +3413,7 @@ function AuthScreen({
             </div>
           </div>
         </motion.div>
-      </div>
+      </motion.div>
     );
   }
 
@@ -3136,7 +3444,7 @@ function AuthScreen({
 
   if (isResetting) {
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-deep-navy flex flex-col items-center justify-center p-4 transition-colors duration-300">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="min-h-screen bg-slate-50 dark:bg-deep-navy flex flex-col items-center justify-center p-4 transition-colors duration-300">
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full max-w-md">
           <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-slate-200 dark:border-slate-800 p-8">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Reset Password</h2>
@@ -3163,12 +3471,12 @@ function AuthScreen({
             </form>
           </div>
         </motion.div>
-      </div>
+      </motion.div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative overflow-hidden transition-colors duration-300">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative overflow-hidden transition-colors duration-300">
       {/* Animated Background Elements */}
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-credita/5 rounded-full blur-[120px] animate-pulse"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500/5 rounded-full blur-[120px] animate-pulse" style={{ animationDelay: '2s' }}></div>
@@ -3320,7 +3628,12 @@ function AuthScreen({
               </div>
             ) : (
               <>
-                <img src="https://www.google.com/favicon.ico" alt="" className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                <svg viewBox="0 0 24 24" aria-hidden="true" className="w-5 h-5 group-hover:scale-110 transition-transform shrink-0">
+                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z" />
+                  <path fill="#34A853" d="M12 24c3.3 0 6.08-1.09 8.1-2.96l-3.88-3.05c-1.09.73-2.5 1.16-4.22 1.16-3.24 0-5.99-2.19-6.97-5.14H1.03v3.14C3.04 21.14 7.21 24 12 24Z" />
+                  <path fill="#FBBC05" d="M5.03 14.01c-.25-.73-.39-1.52-.39-2.34s.14-1.61.39-2.34V6.19H1.03A11.96 11.96 0 0 0 0 11.67c0 1.94.46 3.77 1.03 5.48l4-3.14Z" />
+                  <path fill="#EA4335" d="M12 4.75c1.8 0 3.41.62 4.68 1.83l3.51-3.51C18.07 1.19 15.3 0 12 0 7.21 0 3.04 2.86 1.03 6.81l4 3.14C6.01 6.94 8.76 4.75 12 4.75Z" />
+                </svg>
                 <span>Continue with Google</span>
               </>
             )}
@@ -3394,6 +3707,6 @@ function AuthScreen({
           <span className="text-slate-500 cursor-pointer hover:text-credita">Terms of Service</span> and <span className="text-slate-500 cursor-pointer hover:text-credita">Privacy Policy</span>.
         </p>
       </motion.div>
-    </div>
+    </motion.div>
   );
 }

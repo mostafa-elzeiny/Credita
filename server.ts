@@ -4,7 +4,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { customizePbixWithFinancialData } from "./src/services/pbixCustomizer.ts";
-import { FINANCIAL_DATA_SCHEMA, SYSTEM_PROMPT, reconcileFinancialData } from "./src/services/extractionPrompt.mjs";
+import { runGeminiExtraction } from "./src/services/serverExtractor.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -316,122 +316,63 @@ app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
   // Server-side Gemini Financial Statement Extraction (Ultra-fast & bank-grade precision)
   const handleExtract = async (req: express.Request, res: express.Response) => {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
     try {
-      const { base64Data, mimeType, highPrecision } = req.body;
-      if (!base64Data) {
-        return res.status(400).json({ error: "Missing base64Data in request payload" });
-      }
+      const {
+        base64Data,
+        mimeType,
+        highPrecision,
+        mode,
+        targetSection,
+        failingChecks,
+        currentData,
+        targetPagesHint,
+      } = req.body || {};
 
-      const cleanBase64 = base64Data.includes(",") ? base64Data.split(",")[1] : base64Data;
-      const cleanMimeType = mimeType || "application/pdf";
-
-      const executeWithRetry = async (retryCount = 0): Promise<any> => {
-        const ai = getGenAIClient();
-        // Official high-reasoning & high-speed multi-model cascade for deep multi-page Arabic/English PDF extraction
-        const modelsToTry = [
-          "gemini-4-hydrogen",     // Primary: Best multimodal OCR, rotated tables, Arabic numerals & Notes breakdown reasoning
-          "gemini-3.1-flash-lite", // Secondary high-speed fallback
-        ];
-        const modelName = modelsToTry[retryCount] || modelsToTry[0];
-        try {
-          console.log(`Extracting financial data with model: ${modelName} (attempt ${retryCount + 1}/${modelsToTry.length})`);
-          const config: any = {
-            responseMimeType: "application/json",
-            responseSchema: FINANCIAL_DATA_SCHEMA,
-          };
-          if (modelName === "gemini-4-hydrogen") {
-            config.thinkingConfig = {
-              thinkingLevel: highPrecision ? ThinkingLevel.HIGH : ThinkingLevel.MEDIUM,
-            };
-          } else {
-            config.temperature = highPrecision ? 0.0 : 0.05;
-          }
-          const response = await ai.models.generateContent({
-            model: modelName,
-            contents: {
-              parts: [
-                { text: SYSTEM_PROMPT },
-                {
-                  inlineData: {
-                    data: cleanBase64,
-                    mimeType: cleanMimeType,
-                  },
-                },
-              ],
-            },
-            config,
-          });
-
-          const text = response.text || "{}";
-          return JSON.parse(text);
-        } catch (err: any) {
-          const errDetail = [
-            err?.message,
-            err?.status,
-            err?.code,
-            err?.statusText,
-            String(err),
-            JSON.stringify(err)
-          ].filter(Boolean).join(" ");
-          
-          console.warn(`Model ${modelName} extraction warning:`, errDetail.slice(0, 200));
-
-          const isTransient = 
-            errDetail.includes("429") || 
-            errDetail.includes("RESOURCE_EXHAUSTED") || 
-            errDetail.includes("503") || 
-            errDetail.includes("UNAVAILABLE") || 
-            errDetail.includes("overloaded") || 
-            errDetail.includes("high demand") || 
-            errDetail.includes("Spikes in demand") || 
-            errDetail.includes("temporarily unavailable") || 
-            errDetail.includes("timeout") ||
-            errDetail.includes("500") ||
-            errDetail.includes("502") ||
-            errDetail.includes("504") ||
-            errDetail.includes("ECONNRESET") ||
-            errDetail.includes("400") ||
-            errDetail.includes("404");
-
-          if (isTransient && retryCount < modelsToTry.length - 1) {
-            const nextModel = modelsToTry[retryCount + 1];
-            const backoffMs = (retryCount + 1) * 600;
-            console.warn(`Transient issue on ${modelName}. Switching/retrying with ${nextModel} in ${backoffMs}ms...`);
-            await new Promise((resolve) => setTimeout(resolve, backoffMs));
-            return executeWithRetry(retryCount + 1);
-          }
-          throw err;
-        }
-      };
-
-      const rawExtractedData = await executeWithRetry();
-      const extractedData = reconcileFinancialData(rawExtractedData);
-
-      return res.json({ success: true, data: extractedData });
-    } catch (error: any) {
-      console.error("Server-side Gemini extraction error:", error);
-      let errorMessage = error?.message || "Failed to extract financial data";
-      try {
-        const parsed = typeof errorMessage === 'string' && errorMessage.startsWith('{') ? JSON.parse(errorMessage) : null;
-        if (parsed?.error?.message) {
-          errorMessage = parsed.error.message;
-        }
-      } catch (_) {}
-
-      const isHighDemand = 
-        String(errorMessage).includes("503") || 
-        String(errorMessage).includes("high demand") || 
-        String(errorMessage).includes("Spikes in demand") || 
-        String(errorMessage).includes("UNAVAILABLE") ||
-        String(errorMessage).includes("overloaded");
-
-      if (isHighDemand) {
-        return res.status(503).json({ 
-          error: "النموذج يواجه ضغطاً مؤقتاً في الطلبات (AI Model High Demand). يرجى الضغط على 'إعادة المحاولة / Retry' للمتابعة فوراً." 
+      if (!base64Data || typeof base64Data !== "string") {
+        return res.status(400).json({
+          success: false,
+          code: "MISSING_FILE_DATA",
+          error: "Missing base64Data in request payload.",
+          errorAr: "بيانات الملف مفقودة في الطلب.",
         });
       }
 
-      return res.status(500).json({ error: errorMessage });
+      const apiKey =
+        process.env.GEMINI_API_KEY ||
+        process.env.VITE_GEMINI_API_KEY ||
+        process.env.API_KEY;
+
+      const result = await runGeminiExtraction({
+        apiKey,
+        base64Data,
+        mimeType: mimeType || "application/pdf",
+        highPrecision: Boolean(highPrecision),
+        mode: mode || "full",
+        targetSection: targetSection || null,
+        failingChecks: Array.isArray(failingChecks) ? failingChecks : [],
+        currentData: currentData || null,
+        targetPagesHint: Array.isArray(targetPagesHint) ? targetPagesHint : [],
+        isVercel: Boolean(process.env.VERCEL),
+      });
+
+      return res.json({
+        success: true,
+        mode: result.mode,
+        modelUsed: result.modelUsed,
+        attemptsMade: result.attemptsMade,
+        attemptErrors: result.attemptErrors || [],
+        data: result.data,
+      });
+    } catch (error: any) {
+      console.error("Server-side Gemini extraction error:", error);
+      const status = error?.httpStatus || 500;
+      return res.status(status).json({
+        success: false,
+        code: error?.code || "EXTRACTION_FAILED",
+        error: error?.userMessageEn || error?.message || "Failed to extract financial data",
+        errorAr: error?.userMessageAr || "تعذر استخراج البيانات المالية من المستند. يرجى إعادة المحاولة.",
+      });
     }
   };
 
@@ -894,11 +835,17 @@ Return STRICTLY valid JSON conforming to:
     if (res.headersSent) {
       return next(err);
     }
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
     const statusCode = err.status || err.statusCode || 500;
     const isPayloadTooLarge = err.type === "entity.too.large" || err.message?.includes("entity too large");
+    const isJsonSyntax = err instanceof SyntaxError && (err as any).status === 400;
     return res.status(statusCode).json({
+      success: false,
+      code: isPayloadTooLarge ? "PAYLOAD_TOO_LARGE" : isJsonSyntax ? "INVALID_JSON" : "API_ERROR",
       error: isPayloadTooLarge
-        ? "حجم الملف كبير جداً (أكبر من 100MB). يرجى تقليل حجم الملف أو ضغطه قبل الرفع."
+        ? "حجم الملف يتجاوز الحد الأقصى للطلب. سيتم تقسيم الملف تلقائياً أو يمكنك تقليل حجمه."
+        : isJsonSyntax
+        ? "Invalid JSON body sent to API."
         : (err.message || "An error occurred while processing the API request.")
     });
   });
