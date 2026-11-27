@@ -1,5 +1,5 @@
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
-import { FINANCIAL_DATA_SCHEMA, SYSTEM_PROMPT, reconcileFinancialData } from "../src/services/extractionPrompt";
+import { FINANCIAL_DATA_SCHEMA, SYSTEM_PROMPT, reconcileFinancialData } from "../src/services/extractionPrompt.mjs";
 
 export const config = {
   maxDuration: 60,
@@ -28,7 +28,8 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { base64Data, mimeType, highPrecision } = req.body || {};
+    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+    const { base64Data, mimeType, highPrecision } = body;
     if (!base64Data) {
       return res.status(400).json({ error: "Missing base64Data in request payload" });
     }
@@ -50,16 +51,19 @@ export default async function handler(req: any, res: any) {
       },
     });
 
-    const modelsToTry = [
-      "gemini-4-hydrogen",
-      "gemini-3.1-flash-lite",
+    // On Vercel (60s hard serverless ceiling), prioritize completing before gateway timeout:
+    // 1) Try gemini-4-hydrogen with ThinkingLevel.LOW and a 38s race timeout
+    // 2) Fall back to high-speed gemini-3.1-flash-lite if hydrogen approaches Vercel's 60s limit
+    const attempts = [
+      { model: "gemini-4-hydrogen", timeoutMs: 38000 },
+      { model: "gemini-3.1-flash-lite", timeoutMs: 20000 },
     ];
 
     let extractedData = null;
     let lastErr: any = null;
 
-    for (let i = 0; i < modelsToTry.length; i++) {
-      const model = modelsToTry[i];
+    for (let i = 0; i < attempts.length; i++) {
+      const { model, timeoutMs } = attempts[i];
       try {
         const reqConfig: any = {
           responseMimeType: "application/json",
@@ -67,28 +71,34 @@ export default async function handler(req: any, res: any) {
         };
         if (model === "gemini-4-hydrogen") {
           reqConfig.thinkingConfig = {
-            thinkingLevel: ThinkingLevel.MEDIUM,
+            thinkingLevel: ThinkingLevel.LOW,
           };
         } else {
           reqConfig.temperature = highPrecision ? 0.0 : 0.05;
         }
-        const response = await ai.models.generateContent({
-          model,
-          contents: {
-            parts: [
-              { text: SYSTEM_PROMPT },
-              {
-                inlineData: {
-                  data: cleanBase64,
-                  mimeType: cleanMimeType,
-                },
-              },
-            ],
-          },
-          config: reqConfig,
-        });
 
-        const text = response.text || "{}";
+        const response = await Promise.race([
+          ai.models.generateContent({
+            model,
+            contents: {
+              parts: [
+                { text: SYSTEM_PROMPT },
+                {
+                  inlineData: {
+                    data: cleanBase64,
+                    mimeType: cleanMimeType,
+                  },
+                },
+              ],
+            },
+            config: reqConfig,
+          }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`${model} exceeded ${timeoutMs}ms budget`)), timeoutMs)
+          ),
+        ]) as any;
+
+        const text = response?.text || "{}";
         extractedData = JSON.parse(text);
         if (extractedData) break;
       } catch (err: any) {

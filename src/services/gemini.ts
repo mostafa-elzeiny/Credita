@@ -120,6 +120,14 @@ export interface FinancialData {
 
 export async function extractFinancialData(file: File, highPrecision = false): Promise<FinancialData> {
   const { base64Data, mimeType } = await prepareFileForUpload(file);
+  const isVercelHost = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+
+  // Vercel Serverless Functions enforce a hard 4.5 MB request payload ceiling
+  if (isVercelHost && base64Data.length > 4_400_000) {
+    throw new Error(
+      `حجم الملف بعد الترميز (${(base64Data.length / (1024 * 1024)).toFixed(1)} MB) يتجاوز الحد الأقصى لاستضافة Vercel (4.5 MB). يرجى ضغط ملف الـ PDF لأقل من 3 MB أو استخدام رابط التطبيق الرئيسي.`
+    );
+  }
 
   const maxAttempts = 4;
   let lastError: any = null;
@@ -154,7 +162,7 @@ export async function extractFinancialData(file: File, highPrecision = false): P
       try {
         result = JSON.parse(rawText);
       } catch (parseErr) {
-        console.warn(`Extraction attempt ${attempt} received non-JSON payload (${response.status}):`, rawText.slice(0, 200));
+        console.warn(`Extraction attempt ${attempt} received non-JSON payload (${response.status}):`, rawText.slice(0, 300));
         
         const isHtml = rawText.trim().startsWith('<') || rawText.toLowerCase().includes('<!doctype');
         const isTransientStatus = (response.status >= 500 && response.status <= 504) || response.status === 404 || response.status === 502;
@@ -166,13 +174,24 @@ export async function extractFinancialData(file: File, highPrecision = false): P
           continue;
         }
 
-        const isVercelHost = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+        const upperRaw = rawText.toUpperCase();
+        if (response.status === 413 || upperRaw.includes('PAYLOAD_TOO_LARGE') || upperRaw.includes('ENTITY TOO LARGE')) {
+          throw new Error("حجم ملف الـ PDF يتجاوز الحد المسموح به للخادم (4.5 MB على Vercel). يرجى ضغط الملف وإعادة الرفع.");
+        }
+        if (upperRaw.includes('FUNCTION_INVOCATION_TIMEOUT') || response.status === 504) {
+          throw new Error("استغرق تحليل الملف وقتاً أطول من مهلة الخادم (Timeout). يرجى المحاولة مرة أخرى أو تقسيم الملف.");
+        }
+        if (upperRaw.includes('FUNCTION_INVOCATION_FAILED')) {
+          throw new Error("حدث خطأ أثناء تشغيل دالة الخادم على Vercel (FUNCTION_INVOCATION_FAILED). تأكد من إعادة نشر آخر التحديثات وإضافة GEMINI_API_KEY.");
+        }
+
+        const detailSnippet = rawText.replace(/\s+/g, ' ').trim().slice(0, 140);
         throw new Error(
           isHtml
             ? "الخادم قيد التحديث أو يواجه ضغطاً مؤقتاً. يرجى الضغط على زر 'إعادة المحاولة / Retry'."
             : isVercelHost && response.status === 404
             ? "مسار الخادم غير مفعل على Vercel (Status 404). يرجى التأكد من رفع ملفات vercel.json و api/ المحدثة وإضافة متغير GEMINI_API_KEY في إعدادات المشروع على Vercel."
-            : `استجابة غير متوقعة من الخادم (Status ${response.status}). يرجى إعادة المحاولة.`
+            : `استجابة غير متوقعة من الخادم (Status ${response.status})${detailSnippet ? `: ${detailSnippet}` : ''}. يرجى إعادة المحاولة.`
         );
       }
 

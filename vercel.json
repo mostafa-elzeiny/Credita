@@ -11,6 +11,22 @@
   },
   "rewrites": [
     {
+      "source": "/api/extract",
+      "destination": "/api/extract"
+    },
+    {
+      "source": "/api/extract-financials",
+      "destination": "/api/extract"
+    },
+    {
+      "source": "/api/dashboard-ai",
+      "destination": "/api/dashboard-ai"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/health"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/index"
     },
