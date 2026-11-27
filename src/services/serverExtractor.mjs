@@ -55,6 +55,34 @@ function isHighDemandError(msg) {
   );
 }
 
+function parseRetryAfterSeconds(err) {
+  const rawParts = [
+    err?.retryAfterSeconds,
+    err?.retryAfter,
+    err?.response?.headers?.get?.("retry-after"),
+    err?.headers?.get?.("retry-after"),
+    err?.message,
+    String(err || ""),
+  ]
+    .filter((v) => v !== undefined && v !== null)
+    .map(String)
+    .join(" ");
+
+  const retryInMatch = rawParts.match(/retry(?:\s+again)?\s+(?:in|after)\s+([0-9]+(?:\.[0-9]+)?)\s*(?:s|sec|secs|seconds)?/i);
+  if (retryInMatch) {
+    const val = parseFloat(retryInMatch[1]);
+    if (isFinite(val) && val > 0) return Math.min(60, Math.ceil(val));
+  }
+
+  const retryDelayMatch = rawParts.match(/"retryDelay"\s*:\s*"([0-9]+(?:\.[0-9]+)?)s"/i);
+  if (retryDelayMatch) {
+    const val = parseFloat(retryDelayMatch[1]);
+    if (isFinite(val) && val > 0) return Math.min(60, Math.ceil(val));
+  }
+
+  return null;
+}
+
 function cleanAndParseJson(text) {
   const raw = String(text || "").trim();
   if (!raw) {
@@ -136,48 +164,67 @@ export async function runGeminiExtraction({
   });
 
   const startedAt = Date.now();
-  const hardBudgetMs = isVercel ? 53000 : 180000;
+  const hardBudgetMs = isVercel ? 55000 : 120000;
 
-  // Attempt cascade:
-  // 1-2: gemini-4-hydrogen with exponential backoff on 503/high-demand/transient
-  // 3-4: fallback to gemini-3.1-flash-lite (temperature: 0.0) with backoff
-  const primaryThinking =
-    normalizedMode === "chunk_scan"
-      ? ThinkingLevel.LOW
-      : isVercel
-      ? ThinkingLevel.LOW
-      : normalizedMode === "repair" && highPrecision
+  // Execution plan:
+  // - chunk_scan: fast model only (gemini-3.1-flash-lite, temperature 0, low thinking), max 2 retries
+  // - section/full/repair: strong model (gemini-4-hydrogen) with low thinking (high on explicit highPrecision repair),
+  //   falling back immediately on 429/503 to gemini-3.1-flash-lite (temperature 0, low thinking), max 2 retries
+  const primarySectionThinking =
+    normalizedMode === "repair" && highPrecision && !isVercel
       ? ThinkingLevel.HIGH
-      : ThinkingLevel.MEDIUM;
+      : ThinkingLevel.LOW;
 
-  const executionPlan = [
-    {
-      model: "gemini-4-hydrogen",
-      thinkingLevel: primaryThinking,
-      backoffBeforeMs: 0,
-      callTimeoutMs: isVercel ? 26000 : 75000,
-    },
-    {
-      model: "gemini-4-hydrogen",
-      thinkingLevel: ThinkingLevel.LOW,
-      backoffBeforeMs: 1400,
-      callTimeoutMs: isVercel ? 18000 : 50000,
-    },
-    {
-      model: "gemini-3.1-flash-lite",
-      temperature: 0.0,
-      backoffBeforeMs: 1200,
-      callTimeoutMs: isVercel ? 16000 : 45000,
-    },
-    {
-      model: "gemini-3.1-flash-lite",
-      temperature: 0.0,
-      backoffBeforeMs: 1800,
-      callTimeoutMs: isVercel ? 14000 : 35000,
-    },
-  ];
+  const executionPlan =
+    normalizedMode === "chunk_scan"
+      ? [
+          {
+            model: "gemini-3.1-flash-lite",
+            temperature: 0.0,
+            thinkingLevel: ThinkingLevel.LOW,
+            defaultBackoffMs: 0,
+            callTimeoutMs: isVercel ? 18000 : 35000,
+          },
+          {
+            model: "gemini-3.1-flash-lite",
+            temperature: 0.0,
+            thinkingLevel: ThinkingLevel.LOW,
+            defaultBackoffMs: 1200,
+            callTimeoutMs: isVercel ? 16000 : 30000,
+          },
+          {
+            model: "gemini-3.1-flash-lite",
+            temperature: 0.0,
+            thinkingLevel: ThinkingLevel.LOW,
+            defaultBackoffMs: 2500,
+            callTimeoutMs: isVercel ? 14000 : 25000,
+          },
+        ]
+      : [
+          {
+            model: "gemini-4-hydrogen",
+            thinkingLevel: primarySectionThinking,
+            defaultBackoffMs: 0,
+            callTimeoutMs: isVercel ? 28000 : 50000,
+          },
+          {
+            model: "gemini-3.1-flash-lite",
+            temperature: 0.0,
+            thinkingLevel: ThinkingLevel.LOW,
+            defaultBackoffMs: 800,
+            callTimeoutMs: isVercel ? 18000 : 35000,
+          },
+          {
+            model: "gemini-3.1-flash-lite",
+            temperature: 0.0,
+            thinkingLevel: ThinkingLevel.LOW,
+            defaultBackoffMs: 2200,
+            callTimeoutMs: isVercel ? 15000 : 30000,
+          },
+        ];
 
   let lastError = null;
+  let lastRetryAfterSeconds = null;
   let attemptsMade = 0;
   const attemptErrors = [];
 
@@ -186,41 +233,40 @@ export async function runGeminiExtraction({
     const elapsed = Date.now() - startedAt;
     const remaining = hardBudgetMs - elapsed;
 
-    // On Vercel 60s limit, if remaining budget is tight, skip second hydrogen attempt and go straight to fast fallback
-    if (
-      isVercel &&
-      i === 1 &&
-      remaining < 24000
-    ) {
-      continue;
-    }
-
-    if (remaining < 6000) {
+    if (remaining < 5500) {
       break;
     }
 
-    if (step.backoffBeforeMs > 0) {
-      const waitMs = Math.min(step.backoffBeforeMs, Math.max(0, remaining - 5000));
+    if (i > 0) {
+      // Honor retry-after from previous error if provided, plus random jitter (150-550ms)
+      const jitterMs = 150 + Math.floor(Math.random() * 400);
+      const requestedWaitMs =
+        lastRetryAfterSeconds !== null
+          ? lastRetryAfterSeconds * 1000 + jitterMs
+          : step.defaultBackoffMs + jitterMs;
+      const waitMs = Math.min(requestedWaitMs, Math.max(0, remaining - 6000));
       if (waitMs > 0) {
         await new Promise((r) => setTimeout(r, waitMs));
       }
     }
 
-    const effectiveTimeout = Math.min(step.callTimeoutMs, Math.max(5000, hardBudgetMs - (Date.now() - startedAt)));
+    const effectiveTimeout = Math.min(
+      step.callTimeoutMs,
+      Math.max(5000, hardBudgetMs - (Date.now() - startedAt))
+    );
     attemptsMade++;
 
     try {
       const config = {
         responseMimeType: "application/json",
         responseSchema: schema,
+        thinkingConfig: {
+          thinkingLevel: step.thinkingLevel,
+        },
       };
 
-      if (step.model === "gemini-4-hydrogen") {
-        // Strictly omit temperature/topP/topK for gemini-4-hydrogen
-        config.thinkingConfig = {
-          thinkingLevel: step.thinkingLevel,
-        };
-      } else {
+      if (step.model !== "gemini-4-hydrogen") {
+        // Strictly omit temperature/topP/topK on gemini-4-hydrogen; use temperature 0 on flash-lite
         config.temperature = step.temperature ?? 0.0;
       }
 
@@ -252,6 +298,7 @@ export async function runGeminiExtraction({
           modelUsed: step.model,
           attemptsMade,
           attemptErrors,
+          durationMs: Date.now() - startedAt,
           data: parsed,
         };
       }
@@ -271,10 +318,12 @@ export async function runGeminiExtraction({
         modelUsed: step.model,
         attemptsMade,
         attemptErrors,
+        durationMs: Date.now() - startedAt,
         data: reconciled,
       };
     } catch (err) {
       lastError = err;
+      lastRetryAfterSeconds = parseRetryAfterSeconds(err);
       const errMsg = err?.message || String(err);
       attemptErrors.push(`${step.model}: ${errMsg.slice(0, 180)}`);
       console.warn(
@@ -282,13 +331,11 @@ export async function runGeminiExtraction({
         errMsg.slice(0, 240)
       );
 
-      // Only stop immediately on hard auth/invalid-key errors
       const upper = errMsg.toUpperCase();
       if (upper.includes("API_KEY_INVALID") || upper.includes("PERMISSION_DENIED")) {
         break;
       }
-      if (!isTransientError(err) && i >= 2) {
-        // Still try fallback model even if primary gave a parse/schema quirk!
+      if (!isTransientError(err) && i >= 1) {
         break;
       }
     }
@@ -304,21 +351,22 @@ export async function runGeminiExtraction({
     }
   } catch (_) {}
 
+  const finalRetrySec = lastRetryAfterSeconds ?? parseRetryAfterSeconds(lastError) ?? 5;
   const wrappedErr = new Error(cleanMsg);
   if (isHighDemandError(cleanMsg)) {
-    wrappedErr.httpStatus = 503;
+    wrappedErr.httpStatus = cleanMsg.includes("429") || cleanMsg.toUpperCase().includes("RESOURCE_EXHAUSTED") ? 429 : 503;
     wrappedErr.code = "MODEL_HIGH_DEMAND";
-    wrappedErr.userMessageEn =
-      "The AI model is experiencing temporary high demand (503). Please click Retry in a moment.";
-    wrappedErr.userMessageAr =
-      "نموذج الذكاء الاصطناعي يواجه ضغطاً مؤقتاً في الطلبات (503). يرجى الضغط على 'إعادة المحاولة / Retry' للمتابعة.";
+    wrappedErr.retryAfterSeconds = finalRetrySec;
+    wrappedErr.userMessageEn = `Service busy, retrying in ${finalRetrySec} seconds.`;
+    wrappedErr.userMessageAr = `الخدمة مشغولة، إعادة المحاولة خلال ${finalRetrySec} ثوانٍ.`;
   } else if (String(cleanMsg).toUpperCase().includes("TIMED OUT") || String(cleanMsg).toUpperCase().includes("TIMEOUT")) {
     wrappedErr.httpStatus = 504;
     wrappedErr.code = "EXTRACTION_TIMEOUT";
+    wrappedErr.retryAfterSeconds = 3;
     wrappedErr.userMessageEn =
-      "Extraction timed out on this PDF chunk. Retrying with smaller sections is recommended.";
+      "Extraction timed out on this PDF chunk. Retrying automatically...";
     wrappedErr.userMessageAr =
-      "انتهت مهلة معالجة هذا الجزء من الملف. سيتم إعادة المحاولة أو يمكنك المحاولة مجدداً.";
+      "انتهت مهلة معالجة هذا الجزء من الملف. جاري إعادة المحاولة تلقائياً...";
   } else {
     wrappedErr.httpStatus = 500;
     wrappedErr.code = "EXTRACTION_FAILED";

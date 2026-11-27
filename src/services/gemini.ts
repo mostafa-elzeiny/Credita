@@ -60,6 +60,18 @@ export interface LowConfidenceField {
   extractedValue?: number | null;
 }
 
+export interface StageTimings {
+  prepareMs: number;
+  compressMs: number;
+  scanMs: number;
+  extractMs: number;
+  validateMs: number;
+  repairMs: number;
+  totalMs: number;
+  totalSeconds: number;
+  scannedPdfCompressed?: boolean;
+}
+
 export interface ExtractionMeta {
   mode?: string;
   modelUsed?: string;
@@ -68,13 +80,16 @@ export interface ExtractionMeta {
   pass2Attempted?: boolean;
   pass2Improved?: boolean;
   totalPages?: number;
+  timings?: StageTimings;
 }
 
 export interface ExtractionProgress {
-  stage: 'preparing' | 'scanning' | 'extracting' | 'verifying' | 'repairing' | 'done';
+  stage: 'preparing' | 'compressing' | 'scanning' | 'extracting' | 'verifying' | 'repairing' | 'done';
   percent: number;
   messageEn: string;
   messageAr: string;
+  elapsedSeconds?: number;
+  timings?: StageTimings;
 }
 
 export interface FinancialData {
@@ -310,80 +325,226 @@ function remapLowConfidencePages(items: any[] | undefined, pageMap: Map<number, 
   }));
 }
 
+const MAX_CONCURRENT_REQUESTS = 6;
+let activeRequestCount = 0;
+const requestWaitQueue: Array<() => void> = [];
+
+async function acquireRequestSlot(): Promise<void> {
+  if (activeRequestCount < MAX_CONCURRENT_REQUESTS) {
+    activeRequestCount++;
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    requestWaitQueue.push(() => {
+      activeRequestCount++;
+      resolve();
+    });
+  });
+}
+
+function releaseRequestSlot(): void {
+  activeRequestCount = Math.max(0, activeRequestCount - 1);
+  const next = requestWaitQueue.shift();
+  if (next) next();
+}
+
+async function withApiSlot<T>(fn: () => Promise<T>): Promise<T> {
+  await acquireRequestSlot();
+  try {
+    return await fn();
+  } finally {
+    releaseRequestSlot();
+  }
+}
+
+async function runWithConcurrencyPool<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const limit = Math.max(1, Math.min(concurrency, MAX_CONCURRENT_REQUESTS, items.length));
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const currentIndex = nextIndex++;
+      if (currentIndex >= items.length) break;
+      results[currentIndex] = await worker(items[currentIndex], currentIndex);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
+}
+
 async function splitPdfIntoCompactChunks(
   srcDoc: PDFDocument,
   maxBase64Bytes = 2_700_000,
-  maxPagesPerChunk = 4
+  maxPagesPerChunk = 16
 ): Promise<Array<{ pages: number[]; base64Data: string; pageMap: Map<number, number> }>> {
   const totalPages = srcDoc.getPageCount();
   const chunks: Array<{ pages: number[]; base64Data: string; pageMap: Map<number, number> }> = [];
-  let currentPages: number[] = [];
-  let lastGood: { pages: number[]; base64Data: string; pageMap: Map<number, number> } | null = null;
+  if (totalPages === 0) return chunks;
 
-  for (let p = 1; p <= totalPages; p++) {
-    const candidatePages = [...currentPages, p];
-    const built = await buildSubPdfBase64(srcDoc, candidatePages);
+  // Estimate average bytes per page from first page to avoid O(N^2) PDF rebuilds on 48-page docs
+  const sampleFirst = await buildSubPdfBase64(srcDoc, [1]);
+  const estBytesPerPage = Math.max(40_000, sampleFirst.base64Data.length);
+  let start = 1;
 
-    if (
-      currentPages.length > 0 &&
-      (built.base64Data.length > maxBase64Bytes || candidatePages.length > maxPagesPerChunk)
+  while (start <= totalPages) {
+    const remaining = totalPages - start + 1;
+    let guessCount = Math.max(
+      1,
+      Math.min(
+        remaining,
+        maxPagesPerChunk,
+        Math.floor((maxBase64Bytes * 0.9) / estBytesPerPage) || 1
+      )
+    );
+
+    const makePages = (s: number, c: number) => Array.from({ length: c }, (_, idx) => s + idx);
+
+    let bestPages = makePages(start, guessCount);
+    let bestBuilt = start === 1 && guessCount === 1
+      ? sampleFirst
+      : await buildSubPdfBase64(srcDoc, bestPages);
+
+    // Grow greedily if comfortably below limit
+    while (
+      bestBuilt.base64Data.length <= maxBase64Bytes &&
+      bestPages.length < Math.min(remaining, maxPagesPerChunk)
     ) {
-      if (lastGood) chunks.push(lastGood);
-      const single = await buildSubPdfBase64(srcDoc, [p]);
-      currentPages = [p];
-      lastGood = { pages: [p], ...single };
-    } else {
-      currentPages = candidatePages;
-      lastGood = { pages: candidatePages, ...built };
+      const nextCount = Math.min(
+        remaining,
+        maxPagesPerChunk,
+        bestPages.length + Math.max(1, Math.floor((maxBase64Bytes - bestBuilt.base64Data.length) / estBytesPerPage))
+      );
+      if (nextCount <= bestPages.length) break;
+      const candidatePages = makePages(start, nextCount);
+      const candidateBuilt = await buildSubPdfBase64(srcDoc, candidatePages);
+      if (candidateBuilt.base64Data.length <= maxBase64Bytes) {
+        bestPages = candidatePages;
+        bestBuilt = candidateBuilt;
+      } else {
+        // Binary search between bestPages.length and nextCount - 1
+        let lo = bestPages.length;
+        let hi = nextCount - 1;
+        while (lo < hi) {
+          const mid = Math.ceil((lo + hi) / 2);
+          const midPages = makePages(start, mid);
+          const midBuilt = await buildSubPdfBase64(srcDoc, midPages);
+          if (midBuilt.base64Data.length <= maxBase64Bytes) {
+            bestPages = midPages;
+            bestBuilt = midBuilt;
+            lo = mid;
+          } else {
+            hi = mid - 1;
+          }
+        }
+        break;
+      }
     }
+
+    // Shrink via binary search if initial guess exceeded ceiling
+    if (bestBuilt.base64Data.length > maxBase64Bytes && bestPages.length > 1) {
+      let lo = 1;
+      let hi = bestPages.length - 1;
+      let found: { pages: number[]; base64Data: string; pageMap: Map<number, number> } | null = null;
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const midPages = makePages(start, mid);
+        const midBuilt = await buildSubPdfBase64(srcDoc, midPages);
+        if (midBuilt.base64Data.length <= maxBase64Bytes) {
+          found = { pages: midPages, ...midBuilt };
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      if (found) {
+        bestPages = found.pages;
+        bestBuilt = { base64Data: found.base64Data, pageMap: found.pageMap };
+      } else {
+        bestPages = [start];
+        bestBuilt = await buildSubPdfBase64(srcDoc, [start]);
+      }
+    }
+
+    chunks.push({ pages: bestPages, ...bestBuilt });
+    start += bestPages.length;
   }
 
-  if (lastGood) {
-    chunks.push(lastGood);
-  }
   return chunks;
 }
 
-async function callExtractApi(payload: Record<string, any>, isVercelHost: boolean): Promise<{ data: any; modelUsed?: string; attemptsMade?: number }> {
-  const maxAttempts = 3;
+function extractRetrySeconds(rawText: string, response?: Response, result?: any): number | null {
+  if (typeof result?.retryAfterSeconds === 'number' && result.retryAfterSeconds > 0) {
+    return Math.min(60, Math.ceil(result.retryAfterSeconds));
+  }
+  const headerVal = response?.headers?.get('Retry-After');
+  if (headerVal) {
+    const num = parseFloat(headerVal);
+    if (isFinite(num) && num > 0) return Math.min(60, Math.ceil(num));
+  }
+  const m = String(rawText || '').match(/retrying?\s+(?:again\s+)?(?:in|after)\s+([0-9]+(?:\.[0-9]+)?)\s*(?:s|sec|secs|seconds)?/i);
+  if (m) {
+    const num = parseFloat(m[1]);
+    if (isFinite(num) && num > 0) return Math.min(60, Math.ceil(num));
+  }
+  return null;
+}
+
+async function callExtractApi(
+  payload: Record<string, any>,
+  isVercelHost: boolean,
+  onRetryWait?: (waitSeconds: number) => void
+): Promise<{ data: any; modelUsed?: string; attemptsMade?: number }> {
+  const maxAttempts = 3; // initial attempt + max 2 retries
   let lastError: any = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), isVercelHost ? 65000 : 210000);
-
-      const endpointsToTry = ['/api/extract', '/api/extract-financials'];
-      const targetEndpoint = endpointsToTry[(attempt - 1) % endpointsToTry.length];
-
-      const response = await fetch(targetEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(payload),
-        signal: controller.signal,
+      const { response, rawText } = await withApiSlot(async () => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), isVercelHost ? 65000 : 140000);
+        try {
+          const targetEndpoint = attempt === 2 ? '/api/extract-financials' : '/api/extract';
+          const resp = await fetch(targetEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+          const text = await resp.text();
+          return { response: resp, rawText: text };
+        } finally {
+          clearTimeout(timeoutId);
+        }
       });
 
-      clearTimeout(timeoutId);
-
-      const rawText = await response.text();
       let result: any = null;
       try {
         result = JSON.parse(rawText);
       } catch (_) {
         const isHtml = rawText.trim().startsWith('<') || rawText.toLowerCase().includes('<!doctype');
         const isTransientStatus =
-          (response.status >= 500 && response.status <= 504) || response.status === 404;
+          (response.status >= 500 && response.status <= 504) || response.status === 404 || response.status === 429;
 
         if ((isHtml || isTransientStatus) && attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, attempt * 1800));
+          const waitSec = attempt * 2;
+          onRetryWait?.(waitSec);
+          const jitter = 150 + Math.floor(Math.random() * 350);
+          await new Promise((r) => setTimeout(r, waitSec * 1000 + jitter));
           continue;
         }
 
         const upperRaw = rawText.toUpperCase();
         if (response.status === 413 || upperRaw.includes('PAYLOAD_TOO_LARGE') || upperRaw.includes('ENTITY TOO LARGE')) {
           throw new Error(
-            'حجم الجزء المرسل يتجاوز الحد الأقصى للخادم (4.5 MB على Vercel). سيتم تقليل حجم الصفحات أو يرجى ضغط الملف / PDF chunk exceeded Vercel 4.5 MB limit.'
+            'حجم الجزء المرسل يتجاوز الحد الأقصى للخادم (4.5 MB على Vercel). سيتم تقليل حجم الصفحات / PDF chunk exceeded Vercel 4.5 MB limit.'
           );
         }
         if (upperRaw.includes('FUNCTION_INVOCATION_TIMEOUT') || response.status === 504) {
@@ -418,13 +579,21 @@ async function callExtractApi(payload: Record<string, any>, isVercelHost: boolea
           code === 'MODEL_HIGH_DEMAND' ||
           code === 'EXTRACTION_TIMEOUT' ||
           String(serverError).includes('503') ||
-          String(serverError).toUpperCase().includes('HIGH DEMAND');
+          String(serverError).includes('429') ||
+          String(serverError).toUpperCase().includes('HIGH DEMAND') ||
+          String(serverError).toUpperCase().includes('BUSY');
 
         if (isTransient && attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, attempt * 2000));
+          const parsedSec = extractRetrySeconds(serverError, response, result);
+          const waitSec = parsedSec ?? Math.min(15, attempt * 3);
+          onRetryWait?.(waitSec);
+          const jitter = 150 + Math.floor(Math.random() * 400);
+          await new Promise((r) => setTimeout(r, waitSec * 1000 + jitter));
           continue;
         }
-        throw new Error(serverError);
+        const errObj = new Error(serverError) as Error & { retryAfterSeconds?: number | null };
+        errObj.retryAfterSeconds = extractRetrySeconds(serverError, response, result);
+        throw errObj;
       }
 
       return {
@@ -437,7 +606,10 @@ async function callExtractApi(payload: Record<string, any>, isVercelHost: boolea
       const isAbort = err?.name === 'AbortError';
       const isNetwork = err?.message?.includes('Failed to fetch') || err?.name === 'TypeError';
       if ((isAbort || isNetwork) && attempt < maxAttempts) {
-        await new Promise((r) => setTimeout(r, attempt * 1800));
+        const waitSec = attempt * 2;
+        onRetryWait?.(waitSec);
+        const jitter = 150 + Math.floor(Math.random() * 350);
+        await new Promise((r) => setTimeout(r, waitSec * 1000 + jitter));
         continue;
       }
       break;
@@ -445,16 +617,19 @@ async function callExtractApi(payload: Record<string, any>, isVercelHost: boolea
   }
 
   let friendly = lastError?.message || 'Extraction failed';
+  const retrySec = lastError?.retryAfterSeconds ?? extractRetrySeconds(friendly) ?? 8;
   if (lastError?.name === 'AbortError' || friendly.includes('Failed to fetch')) {
     friendly =
       'انقطع الاتصال المؤقت بالخادم أثناء تحليل الملف. يرجى الضغط على إعادة المحاولة / Temporary connection interruption while analyzing the document. Please retry.';
   } else if (
     friendly.includes('503') ||
+    friendly.includes('429') ||
     friendly.toUpperCase().includes('HIGH DEMAND') ||
-    friendly.toUpperCase().includes('UNAVAILABLE')
+    friendly.toUpperCase().includes('UNAVAILABLE') ||
+    friendly.toUpperCase().includes('QUOTA') ||
+    friendly.toUpperCase().includes('BUSY')
   ) {
-    friendly =
-      'نموذج الذكاء الاصطناعي يواجه ضغطاً مؤقتاً في الطلبات (503). يرجى الضغط على إعادة المحاولة / AI model high demand (503). Please click Retry.';
+    friendly = `Service busy, retrying in ${retrySec} seconds / الخدمة مشغولة، يرجى إعادة المحاولة خلال ${retrySec} ثوانٍ.`;
   }
   throw new Error(friendly);
 }
@@ -620,12 +795,15 @@ function isCandidateBetter(candidate: FinancialData, baseline: FinancialData): b
   return cVal.totalDifference < bVal.totalDifference - 10;
 }
 
-function collectRepairPages(data: FinancialData, totalPages: number): number[] {
-  const failing = data.validation?.checks?.filter((c) => !c.passed) || [];
+function collectRepairPagesForChecks(
+  data: FinancialData,
+  checks: any[],
+  totalPages: number
+): number[] {
   const citations = data.pageCitations || {};
   const pages = new Set<number>();
 
-  for (const chk of failing) {
+  for (const chk of checks) {
     if (typeof chk.pageNumber === 'number' && chk.pageNumber >= 1 && chk.pageNumber <= totalPages) {
       pages.add(chk.pageNumber);
     }
@@ -633,12 +811,12 @@ function collectRepairPages(data: FinancialData, totalPages: number): number[] {
       if (citations.incomeStatementPage) pages.add(citations.incomeStatementPage);
       if (citations.gnaNotePage) pages.add(citations.gnaNotePage);
     }
-    if (chk.section === 'assets' || chk.section === 'balance_sheet') {
+    if (chk.section === 'assets' || chk.section === 'balance_sheet' || chk.id === 'balance_equation') {
       if (citations.balanceSheetPage) pages.add(citations.balanceSheetPage);
       if (citations.debtorsNotePage) pages.add(citations.debtorsNotePage);
       if (citations.fixedAssetsNotePage) pages.add(citations.fixedAssetsNotePage);
     }
-    if (chk.section === 'liabilities_equity' || chk.section === 'balance_sheet' || chk.section === 'equity_movement') {
+    if (chk.section === 'liabilities_equity' || chk.section === 'balance_sheet' || chk.section === 'equity_movement' || chk.id === 'balance_equation') {
       if (citations.balanceSheetPage) pages.add(citations.balanceSheetPage);
       if (citations.creditorsNotePage) pages.add(citations.creditorsNotePage);
       if (citations.equityStatementPage) pages.add(citations.equityStatementPage);
@@ -652,26 +830,259 @@ function collectRepairPages(data: FinancialData, totalPages: number): number[] {
   return Array.from(pages).filter((p) => p >= 1 && p <= totalPages).sort((a, b) => a - b);
 }
 
+function dataUrlToUint8Array(dataUrl: string): Uint8Array {
+  const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    bytes[i] = bin.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function compressScannedPdfIfNeeded(
+  originalBytes: Uint8Array,
+  pdfDoc: PDFDocument,
+  onProgress?: (donePages: number, totalPages: number) => void
+): Promise<{ pdfDoc: PDFDocument; base64Data: string; compressed: boolean; reason: string }> {
+  // Only run in browser DOM environments with pdf.js + canvas
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return {
+      pdfDoc,
+      base64Data: uint8ToBase64(originalBytes),
+      compressed: false,
+      reason: 'non-browser',
+    };
+  }
+
+  const pageCount = pdfDoc.getPageCount();
+  if (pageCount === 0) {
+    return {
+      pdfDoc,
+      base64Data: uint8ToBase64(originalBytes),
+      compressed: false,
+      reason: 'empty',
+    };
+  }
+
+  try {
+    const pdfjsLib: any = await import('pdfjs-dist');
+    const workerMod: any = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
+    if (pdfjsLib.GlobalWorkerOptions && workerMod?.default) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = workerMod.default;
+    }
+
+    const loadingTask = pdfjsLib.getDocument({
+      data: originalBytes.slice(),
+      verbosity: 0,
+    });
+    const pdfJsDoc = await loadingTask.promise;
+
+    try {
+      // Sample up to 5 pages across the document to distinguish text PDFs from scanned PDFs
+      const sampleCount = Math.min(5, pdfJsDoc.numPages);
+      const sampleIndices: number[] = [];
+      for (let i = 0; i < sampleCount; i++) {
+        const pNum = sampleCount === 1 ? 1 : Math.min(pdfJsDoc.numPages, Math.max(1, Math.round(1 + (i * (pdfJsDoc.numPages - 1)) / (sampleCount - 1))));
+        if (!sampleIndices.includes(pNum)) sampleIndices.push(pNum);
+      }
+
+      let totalChars = 0;
+      for (const pNum of sampleIndices) {
+        const page = await pdfJsDoc.getPage(pNum);
+        const textContent = await page.getTextContent();
+        const pageText = (textContent?.items || [])
+          .map((it: any) => String(it?.str || ''))
+          .join('')
+          .replace(/\s+/g, '');
+        totalChars += pageText.length;
+        page.cleanup?.();
+      }
+
+      const avgCharsPerPage = totalChars / Math.max(1, sampleIndices.length);
+      if (avgCharsPerPage >= 80) {
+        return {
+          pdfDoc,
+          base64Data: uint8ToBase64(originalBytes),
+          compressed: false,
+          reason: `text-pdf (avg ${Math.round(avgCharsPerPage)} chars/page)`,
+        };
+      }
+
+      // Scanned/image-based PDF: re-render each page at ~150 DPI grayscale JPEG (quality 0.70)
+      const outDoc = await PDFDocument.create();
+      const targetDpiScale = 150 / 72; // ~2.083x (150 DPI)
+      const renderedJpegs: Array<{ jpegBytes: Uint8Array; ptWidth: number; ptHeight: number }> = new Array(pdfJsDoc.numPages);
+      let completed = 0;
+
+      const pageNumbers = Array.from({ length: pdfJsDoc.numPages }, (_, idx) => idx + 1);
+      // Render 4 pages concurrently on canvas to stay responsive without blowing browser RAM
+      for (let i = 0; i < pageNumbers.length; i += 4) {
+        const batch = pageNumbers.slice(i, i + 4);
+        await Promise.all(
+          batch.map(async (pNum) => {
+            const page = await pdfJsDoc.getPage(pNum);
+            const baseViewport = page.getViewport({ scale: 1 });
+            const maxDim = Math.max(baseViewport.width * targetDpiScale, baseViewport.height * targetDpiScale);
+            const clampedScale = maxDim > 2400 ? (2400 / Math.max(baseViewport.width, baseViewport.height)) : targetDpiScale;
+            const viewport = page.getViewport({ scale: clampedScale });
+
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(viewport.width));
+            canvas.height = Math.max(1, Math.round(viewport.height));
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+            if (!ctx) {
+              throw new Error('Canvas 2D context unavailable');
+            }
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
+
+            // True luminance grayscale + mild contrast boost to preserve crisp financial numerals
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const pixels = imgData.data;
+            for (let k = 0; k < pixels.length; k += 4) {
+              const lum = 0.299 * pixels[k] + 0.587 * pixels[k + 1] + 0.114 * pixels[k + 2];
+              // Mild contrast around midpoint so small scanned digits stay razor sharp
+              const contrasted = Math.max(0, Math.min(255, (lum - 128) * 1.12 + 128));
+              pixels[k] = contrasted;
+              pixels[k + 1] = contrasted;
+              pixels[k + 2] = contrasted;
+            }
+            ctx.putImageData(imgData, 0, 0);
+
+            const jpgUrl = canvas.toDataURL('image/jpeg', 0.7);
+            renderedJpegs[pNum - 1] = {
+              jpegBytes: dataUrlToUint8Array(jpgUrl),
+              ptWidth: baseViewport.width,
+              ptHeight: baseViewport.height,
+            };
+
+            canvas.width = 0;
+            canvas.height = 0;
+            page.cleanup?.();
+            completed++;
+            onProgress?.(completed, pdfJsDoc.numPages);
+          })
+        );
+      }
+
+      for (const item of renderedJpegs) {
+        const jpgImage = await outDoc.embedJpg(item.jpegBytes);
+        const pdfPage = outDoc.addPage([item.ptWidth, item.ptHeight]);
+        pdfPage.drawImage(jpgImage, {
+          x: 0,
+          y: 0,
+          width: item.ptWidth,
+          height: item.ptHeight,
+        });
+      }
+
+      const compressedBytes = await outDoc.save();
+      if (compressedBytes.length < originalBytes.length * 0.95) {
+        return {
+          pdfDoc: outDoc,
+          base64Data: uint8ToBase64(compressedBytes),
+          compressed: true,
+          reason: `compressed ${Math.round(originalBytes.length / 1024)}KB -> ${Math.round(compressedBytes.length / 1024)}KB`,
+        };
+      }
+
+      return {
+        pdfDoc,
+        base64Data: uint8ToBase64(originalBytes),
+        compressed: false,
+        reason: 'already-compact',
+      };
+    } finally {
+      await loadingTask.destroy?.();
+    }
+  } catch (err) {
+    console.warn('Scanned PDF compression skipped cleanly, using original PDF:', err);
+    return {
+      pdfDoc,
+      base64Data: uint8ToBase64(originalBytes),
+      compressed: false,
+      reason: 'fallback-original',
+    };
+  }
+}
+
 export async function extractFinancialData(
   file: File,
   highPrecision = false,
   onProgress?: (progress: ExtractionProgress) => void
 ): Promise<FinancialData> {
+  const pipelineStart = performance.now();
+  const timings: StageTimings = {
+    prepareMs: 0,
+    compressMs: 0,
+    scanMs: 0,
+    extractMs: 0,
+    validateMs: 0,
+    repairMs: 0,
+    totalMs: 0,
+    totalSeconds: 0,
+    scannedPdfCompressed: false,
+  };
+
+  const elapsedSec = () => Math.round(((performance.now() - pipelineStart) / 1000) * 10) / 10;
+
   const emit = (
     stage: ExtractionProgress['stage'],
     percent: number,
     messageEn: string,
-    messageAr: string
+    messageAr: string,
+    extraTimings?: StageTimings
   ) => {
-    onProgress?.({ stage, percent, messageEn, messageAr });
+    onProgress?.({
+      stage,
+      percent,
+      messageEn,
+      messageAr,
+      elapsedSeconds: Math.floor((performance.now() - pipelineStart) / 1000),
+      timings: extraTimings,
+    });
   };
 
   const isVercelHost =
     typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
 
-  emit('preparing', 8, 'Preparing document for analysis...', 'جاري تجهيز المستند للتحليل...');
+  emit('preparing', 5, 'Preparing document...', 'جاري تجهيز المستند...');
+  const prepStart = performance.now();
+  const prepared = await prepareFileForUpload(file);
+  let { base64Data, mimeType, pdfDoc, rawBytes } = prepared;
+  timings.prepareMs = Math.round(performance.now() - prepStart);
 
-  const { base64Data, mimeType, pdfDoc } = await prepareFileForUpload(file);
+  // Step 3: Compress scanned PDFs client-side (~150 DPI grayscale JPEG 0.7), skip text PDFs
+  if (pdfDoc && rawBytes) {
+    const compStart = performance.now();
+    const pageTotal = pdfDoc.getPageCount();
+    emit(
+      'compressing',
+      8,
+      `Checking PDF compression (${pageTotal} pages)...`,
+      `فحص وضغط الصفحات الممسوحة (${pageTotal} صفحة)...`
+    );
+    const compRes = await compressScannedPdfIfNeeded(rawBytes, pdfDoc, (doneP, totalP) => {
+      const pct = 8 + Math.round((doneP / Math.max(1, totalP)) * 10);
+      emit(
+        'compressing',
+        pct,
+        `Compressing scanned pages ${doneP}/${totalP}...`,
+        `ضغط الصفحات الممسوحة ${doneP}/${totalP}...`
+      );
+    });
+    pdfDoc = compRes.pdfDoc;
+    base64Data = compRes.base64Data;
+    timings.scannedPdfCompressed = compRes.compressed;
+    timings.compressMs = Math.round(performance.now() - compStart);
+    console.info(`[Credita Timing] Prepare: ${timings.prepareMs}ms | Compress (${compRes.reason}): ${timings.compressMs}ms`);
+  }
+
   const rawBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
   const pageCount = pdfDoc ? pdfDoc.getPageCount() : 1;
 
@@ -679,20 +1090,57 @@ export async function extractFinancialData(
   const shouldChunkPdf =
     Boolean(pdfDoc) &&
     pageCount > 1 &&
-    (rawBase64.length > (isVercelHost ? 2_800_000 : 3_800_000) ||
-      (isVercelHost && pageCount > 10));
+    (rawBase64.length > (isVercelHost ? 2_600_000 : 3_400_000) ||
+      pageCount > 10);
 
   let pass1Result: FinancialData;
 
+  const notifyRetry = (waitSec: number, currentStage: ExtractionProgress['stage'], currentPct: number) => {
+    emit(
+      currentStage,
+      currentPct,
+      `Service busy, retrying in ${waitSec} seconds...`,
+      `الخدمة مشغولة، إعادة المحاولة خلال ${waitSec} ثوانٍ...`
+    );
+  };
+
   if (shouldChunkPdf && pdfDoc) {
+    const scanStart = performance.now();
+    // Large chunks close to 2.7 MB so 48 pages -> ~5-6 scan calls
+    const chunks = await splitPdfIntoCompactChunks(pdfDoc, 2_650_000, 14);
+    let scannedDone = 0;
+
     emit(
       'scanning',
-      15,
-      `Large PDF (${pageCount} pages): scanning & splitting into compact chunks...`,
-      `ملف كبير (${pageCount} صفحة): جاري مسح وتقسيم الصفحات لتحسين الدقة...`
+      20,
+      `Scanning 0/${chunks.length} chunks (${pageCount} pages)...`,
+      `مسح الصفحات 0/${chunks.length} (${pageCount} صفحة)...`
     );
 
-    const chunks = await splitPdfIntoCompactChunks(pdfDoc, 2_700_000, 4);
+    const scanResponses = await runWithConcurrencyPool(chunks, 6, async (ch) => {
+      const scanRes = await callExtractApi(
+        {
+          base64Data: ch.base64Data,
+          mimeType: 'application/pdf',
+          mode: 'chunk_scan',
+        },
+        isVercelHost,
+        (wSec) => notifyRetry(wSec, 'scanning', 20 + Math.round((scannedDone / chunks.length) * 25))
+      );
+      scannedDone++;
+      const pct = 20 + Math.round((scannedDone / chunks.length) * 25);
+      emit(
+        'scanning',
+        pct,
+        `Scanning ${scannedDone}/${chunks.length}...`,
+        `مسح الصفحات ${scannedDone}/${chunks.length}...`
+      );
+      return { ch, scanData: scanRes.data };
+    });
+
+    timings.scanMs = Math.round(performance.now() - scanStart);
+    console.info(`[Credita Timing] Scanning (${chunks.length} chunks, concurrency=6): ${timings.scanMs}ms`);
+
     const pageIndex: Array<{
       globalPage: number;
       hasIncomeStatement: boolean;
@@ -708,26 +1156,7 @@ export async function extractFinancialData(
     let detectedCompany = '';
     let detectedYear = 0;
 
-    for (let i = 0; i < chunks.length; i++) {
-      const ch = chunks[i];
-      const pct = 18 + Math.round(((i + 1) / chunks.length) * 18);
-      emit(
-        'scanning',
-        pct,
-        `Indexing pages ${ch.pages[0]}–${ch.pages[ch.pages.length - 1]} of ${pageCount}...`,
-        `فهرسة الصفحات ${ch.pages[0]}–${ch.pages[ch.pages.length - 1]} من ${pageCount}...`
-      );
-
-      const scanRes = await callExtractApi(
-        {
-          base64Data: ch.base64Data,
-          mimeType: 'application/pdf',
-          mode: 'chunk_scan',
-        },
-        isVercelHost
-      );
-
-      const scanData = scanRes.data;
+    for (const { ch, scanData } of scanResponses) {
       if (!detectedCompany && scanData?.companyName) detectedCompany = scanData.companyName;
       if (!detectedYear && scanData?.year) detectedYear = scanData.year;
 
@@ -762,20 +1191,20 @@ export async function extractFinancialData(
     }> = [
       {
         section: 'income_statement',
-        labelEn: 'Extracting Income Statement & G&A Notes...',
-        labelAr: 'استخراج قائمة الدخل وإيضاح المصروفات العمومية...',
+        labelEn: 'Income Statement & Notes',
+        labelAr: 'قائمة الدخل والإيضاحات',
         pages: pickPages((p) => p.hasIncomeStatement || p.hasGnaNote || p.hasEquityStatement, 4),
       },
       {
         section: 'balance_sheet_assets',
-        labelEn: 'Extracting Balance Sheet Assets & Fixed Assets Schedule...',
-        labelAr: 'استخراج الأصول وجدول الأصول الثابتة والمدينين...',
+        labelEn: 'Balance Sheet Assets',
+        labelAr: 'أصول الميزانية',
         pages: pickPages((p) => p.hasBalanceSheet || p.hasDebtorsNote || p.hasFixedAssetsNote, 5),
       },
       {
         section: 'balance_sheet_liabilities_equity',
-        labelEn: 'Extracting Liabilities, Creditors & Equity Movement...',
-        labelAr: 'استخراج الالتزامات والدائنين وحقوق الملكية...',
+        labelEn: 'Liabilities & Equity',
+        labelAr: 'الالتزامات وحقوق الملكية',
         pages: pickPages((p) => p.hasBalanceSheet || p.hasCreditorsNote || p.hasEquityStatement, 5),
       },
     ];
@@ -784,24 +1213,29 @@ export async function extractFinancialData(
     if (cfPages.length > 0) {
       sectionSpecs.push({
         section: 'cash_flow',
-        labelEn: 'Extracting Cash Flow Statement...',
-        labelAr: 'استخراج قائمة التدفقات النقدية...',
+        labelEn: 'Cash Flow Statement',
+        labelAr: 'التدفقات النقدية',
         pages: Array.from(new Set([...cfPages, ...pickPages((p) => p.hasBalanceSheet, 2)])).sort((a, b) => a - b),
       });
     }
 
-    const sectionResults: Array<{ section: string; data: any; pageMap: Map<number, number> }> = [];
-    for (let i = 0; i < sectionSpecs.length; i++) {
-      const spec = sectionSpecs[i];
-      const pct = 40 + Math.round(((i + 1) / sectionSpecs.length) * 35);
-      emit('extracting', pct, spec.labelEn, spec.labelAr);
+    const extractStart = performance.now();
+    const totalSections = sectionSpecs.length;
+    let sectionsDone = 0;
 
+    emit(
+      'extracting',
+      48,
+      `Extracting 0/${totalSections}...`,
+      `استخراج البيانات 0/${totalSections}...`
+    );
+
+    const sectionResults = await runWithConcurrencyPool(sectionSpecs, 6, async (spec) => {
       let pagesToSend = spec.pages;
-      let built = await buildSubPdfBase64(pdfDoc, pagesToSend);
-      // Trim trailing non-essential pages if chunk still exceeds safe size ceiling
+      let built = await buildSubPdfBase64(pdfDoc!, pagesToSend);
       while (built.base64Data.length > 3_100_000 && pagesToSend.length > 1) {
         pagesToSend = pagesToSend.slice(0, pagesToSend.length - 1);
-        built = await buildSubPdfBase64(pdfDoc, pagesToSend);
+        built = await buildSubPdfBase64(pdfDoc!, pagesToSend);
       }
 
       if (isVercelHost && built.base64Data.length > 4_300_000) {
@@ -818,20 +1252,31 @@ export async function extractFinancialData(
           mode: 'section',
           targetSection: spec.section,
         },
-        isVercelHost
+        isVercelHost,
+        (wSec) => notifyRetry(wSec, 'extracting', 48 + Math.round((sectionsDone / totalSections) * 32))
       );
 
-      sectionResults.push({
+      sectionsDone++;
+      const pct = 48 + Math.round((sectionsDone / totalSections) * 32);
+      emit(
+        'extracting',
+        pct,
+        `Extracting ${sectionsDone}/${totalSections} (${spec.labelEn})...`,
+        `استخراج ${sectionsDone}/${totalSections} (${spec.labelAr})...`
+      );
+
+      return {
         section: spec.section,
         data: res.data,
         pageMap: built.pageMap,
-      });
+      };
+    });
 
-      if (i < sectionSpecs.length - 1) {
-        await new Promise((r) => setTimeout(r, 350));
-      }
-    }
+    timings.extractMs = Math.round(performance.now() - extractStart);
+    console.info(`[Credita Timing] Section extraction (${totalSections} parallel calls): ${timings.extractMs}ms`);
 
+    const valStart = performance.now();
+    emit('verifying', 82, 'Validating extracted figures...', 'جاري التحقق المحاسبي...');
     const merged = mergeSectionOutputs(sectionResults);
     if (!merged.companyName && detectedCompany) merged.companyName = detectedCompany;
     if (!merged.year && detectedYear) merged.year = detectedYear;
@@ -841,6 +1286,7 @@ export async function extractFinancialData(
       chunked: true,
     };
     pass1Result = sanitizeFinancialData(merged);
+    timings.validateMs = Math.round(performance.now() - valStart);
   } else {
     if (isVercelHost && rawBase64.length > 4_300_000) {
       throw new Error(
@@ -848,11 +1294,12 @@ export async function extractFinancialData(
       );
     }
 
+    const extractStart = performance.now();
     emit(
       'extracting',
       35,
-      'Extracting financial statements & notes...',
-      'جاري استخراج القوائم المالية والإيضاحات المتممة...'
+      'Extracting 1/1 (Statements & Notes)...',
+      'استخراج البيانات 1/1 (القوائم والإيضاحات)...'
     );
 
     const singleRes = await callExtractApi(
@@ -862,9 +1309,13 @@ export async function extractFinancialData(
         highPrecision,
         mode: 'full',
       },
-      isVercelHost
+      isVercelHost,
+      (wSec) => notifyRetry(wSec, 'extracting', 50)
     );
+    timings.extractMs = Math.round(performance.now() - extractStart);
 
+    const valStart = performance.now();
+    emit('verifying', 82, 'Validating extracted figures...', 'جاري التحقق المحاسبي...');
     const reconciled = reconcileFinancialData(singleRes.data);
     reconciled.extractionMeta = {
       ...(reconciled.extractionMeta || {}),
@@ -874,130 +1325,164 @@ export async function extractFinancialData(
       totalPages: pageCount,
     };
     pass1Result = sanitizeFinancialData(reconciled);
+    timings.validateMs = Math.round(performance.now() - valStart);
   }
 
   // -------------------------------------------------------------------------
-  // Pass 2 Automatic Verification & Targeted Repair (Requirement 3)
+  // Step 4: Pass 2 Targeted Repair — ONLY when validation fails, ONLY failing sections, IN PARALLEL
   // -------------------------------------------------------------------------
   if (pass1Result.validation && !pass1Result.validation.allPassed) {
+    const repairStart = performance.now();
     const failedChecks = pass1Result.validation.checks.filter((c) => !c.passed);
-    emit(
-      'repairing',
-      82,
-      `Found ${failedChecks.length} check mismatch(es) — running targeted Pass 2 re-read...`,
-      `تم رصد ${failedChecks.length} فروقات — جاري إعادة فحص الصفحات المعنية (Pass 2)...`
-    );
 
-    try {
-      const targetPages = pdfDoc ? collectRepairPages(pass1Result, pageCount) : [];
-      let repairBase64 = base64Data;
-      let repairPageMap: Map<number, number> | null = null;
+    const isChecks = failedChecks.filter((c) => c.section === 'income_statement' || c.id === 'equity_movement_agreement');
+    const assetChecks = failedChecks.filter((c) => c.section === 'assets' || c.id === 'balance_equation' || c.id === 'cash_flow_agreement');
+    const leChecks = failedChecks.filter((c) => c.section === 'liabilities_equity' || c.id === 'balance_equation' || c.id === 'equity_movement_agreement');
+    const cfChecks = failedChecks.filter((c) => c.section === 'cash_flow');
 
-      if (pdfDoc && targetPages.length > 0) {
-        const sub = await buildSubPdfBase64(pdfDoc, targetPages);
-        if (sub.base64Data.length <= 3_400_000) {
-          repairBase64 = sub.base64Data;
-          repairPageMap = sub.pageMap;
-        }
-      }
+    const repairJobs: Array<{ section: string; checks: any[] }> = [];
+    if (isChecks.length > 0) repairJobs.push({ section: 'income_statement', checks: isChecks });
+    if (assetChecks.length > 0) repairJobs.push({ section: 'balance_sheet_assets', checks: assetChecks });
+    if (leChecks.length > 0) repairJobs.push({ section: 'balance_sheet_liabilities_equity', checks: leChecks });
+    if (cfChecks.length > 0) repairJobs.push({ section: 'cash_flow', checks: cfChecks });
 
-      if (!(isVercelHost && repairBase64.length > 4_300_000)) {
-        const repairRes = await callExtractApi(
-          {
-            base64Data: repairBase64,
-            mimeType: pdfDoc ? 'application/pdf' : mimeType,
-            highPrecision: true,
-            mode: 'repair',
-            failingChecks: failedChecks,
-            targetPagesHint: targetPages,
-            currentData: {
-              unitMetadata: pass1Result.unitMetadata,
-              printedTotals: pass1Result.printedTotals,
-              verificationWorksheet: pass1Result.verificationWorksheet,
-              incomeStatement: pass1Result.incomeStatement,
-              balanceSheet: pass1Result.balanceSheet,
-            },
-          },
-          isVercelHost
-        );
+    if (repairJobs.length > 0) {
+      emit(
+        'repairing',
+        86,
+        `Repairing ${repairJobs.length} failing section(s)...`,
+        `إعادة فحص ${repairJobs.length} أقسام غير متطابقة (Pass 2)...`
+      );
 
-        const rawPass2 = repairRes.data;
-        if (rawPass2) {
-          if (repairPageMap) {
-            rawPass2.pageCitations = remapPageCitations(rawPass2.pageCitations, repairPageMap);
-            rawPass2.lowConfidenceFields = remapLowConfidencePages(
-              rawPass2.lowConfidenceFields,
-              repairPageMap
-            );
+      try {
+        const repairOutputs = await runWithConcurrencyPool(repairJobs, 6, async (job) => {
+          const targetPages = pdfDoc ? collectRepairPagesForChecks(pass1Result, job.checks, pageCount) : [];
+          let repairBase64 = base64Data;
+          let repairPageMap: Map<number, number> | null = null;
+
+          if (pdfDoc && targetPages.length > 0) {
+            const sub = await buildSubPdfBase64(pdfDoc, targetPages);
+            if (sub.base64Data.length <= 3_400_000) {
+              repairBase64 = sub.base64Data;
+              repairPageMap = sub.pageMap;
+            }
           }
 
-          const failingSectionsSet = new Set(failedChecks.map((c) => c.section));
-          const repairIS =
-            failingSectionsSet.has('income_statement') || failingSectionsSet.has('equity_movement');
-          const repairAssets =
-            failingSectionsSet.has('assets') || failingSectionsSet.has('balance_sheet') || failingSectionsSet.has('cash_flow');
-          const repairLE =
-            failingSectionsSet.has('liabilities_equity') || failingSectionsSet.has('balance_sheet') || failingSectionsSet.has('equity_movement');
+          if (isVercelHost && repairBase64.length > 4_300_000) {
+            return null;
+          }
 
-          const mergedPass2: any = {
-            companyName: rawPass2.companyName || pass1Result.companyName,
-            year: rawPass2.year || pass1Result.year,
-            unitMetadata: rawPass2.unitMetadata || pass1Result.unitMetadata,
-            printedTotals: {
-              ...(pass1Result.printedTotals || {}),
-              ...(Object.fromEntries(
-                Object.entries(rawPass2.printedTotals || {}).filter(
-                  ([, v]) => typeof v === 'number' && !isNaN(v)
-                )
-              )),
+          const repairRes = await callExtractApi(
+            {
+              base64Data: repairBase64,
+              mimeType: pdfDoc ? 'application/pdf' : mimeType,
+              highPrecision: true,
+              mode: 'repair',
+              targetSection: job.section,
+              failingChecks: job.checks,
+              targetPagesHint: targetPages,
+              currentData: {
+                unitMetadata: pass1Result.unitMetadata,
+                printedTotals: pass1Result.printedTotals,
+                verificationWorksheet: pass1Result.verificationWorksheet,
+                incomeStatement: pass1Result.incomeStatement,
+                balanceSheet: pass1Result.balanceSheet,
+              },
             },
-            pageCitations: {
-              ...(pass1Result.pageCitations || {}),
-              ...(rawPass2.pageCitations || {}),
-            },
-            lowConfidenceFields:
-              Array.isArray(rawPass2.lowConfidenceFields) && rawPass2.lowConfidenceFields.length > 0
-                ? rawPass2.lowConfidenceFields
-                : pass1Result.lowConfidenceFields,
-            verificationWorksheet: {
-              ...(pass1Result.verificationWorksheet || {}),
-              ...(Object.fromEntries(
-                Object.entries(rawPass2.verificationWorksheet || {}).filter(
-                  ([, v]) => typeof v === 'number' && !isNaN(v) && v !== 0
-                )
-              )),
-            },
-            notes: {
-              ...(pass1Result.notes || {}),
-              ...(rawPass2.notes || {}),
-            },
-            incomeStatement: repairIS
-              ? {
-                  ...pass1Result.incomeStatement,
-                  ...(Object.fromEntries(
-                    Object.entries(rawPass2.incomeStatement || {}).filter(([, v]) => v !== undefined && v !== null)
-                  )),
-                }
-              : { ...pass1Result.incomeStatement },
-            balanceSheet: {
-              ...pass1Result.balanceSheet,
-              ...(repairAssets
-                ? Object.fromEntries(
-                    ASSET_KEYS.filter((k) => rawPass2.balanceSheet?.[k] !== undefined && rawPass2.balanceSheet?.[k] !== null)
-                      .map((k) => [k, rawPass2.balanceSheet[k]])
-                  )
-                : {}),
-              ...(repairLE
-                ? Object.fromEntries(
-                    LIABILITY_EQUITY_KEYS.filter((k) => rawPass2.balanceSheet?.[k] !== undefined && rawPass2.balanceSheet?.[k] !== null)
-                      .map((k) => [k, rawPass2.balanceSheet[k]])
-                  )
-                : {}),
-            },
+            isVercelHost,
+            (wSec) => notifyRetry(wSec, 'repairing', 90)
+          );
+
+          return {
+            section: job.section,
+            data: repairRes.data,
+            modelUsed: repairRes.modelUsed,
+            pageMap: repairPageMap,
           };
+        });
+
+        const validRepairs = repairOutputs.filter(Boolean) as Array<{
+          section: string;
+          data: any;
+          modelUsed?: string;
+          pageMap: Map<number, number> | null;
+        }>;
+
+        if (validRepairs.length > 0) {
+          const mergedPass2: any = {
+            companyName: pass1Result.companyName,
+            year: pass1Result.year,
+            unitMetadata: pass1Result.unitMetadata,
+            printedTotals: { ...(pass1Result.printedTotals || {}) },
+            pageCitations: { ...(pass1Result.pageCitations || {}) },
+            lowConfidenceFields: [...(pass1Result.lowConfidenceFields || [])],
+            verificationWorksheet: { ...(pass1Result.verificationWorksheet || {}) },
+            notes: { ...(pass1Result.notes || {}) },
+            incomeStatement: { ...pass1Result.incomeStatement },
+            balanceSheet: { ...pass1Result.balanceSheet },
+          };
+
+          for (const rep of validRepairs) {
+            const rawPass2 = rep.data;
+            if (!rawPass2) continue;
+
+            if (rep.pageMap) {
+              rawPass2.pageCitations = remapPageCitations(rawPass2.pageCitations, rep.pageMap);
+              rawPass2.lowConfidenceFields = remapLowConfidencePages(rawPass2.lowConfidenceFields, rep.pageMap);
+            }
+
+            if (rawPass2.companyName && !mergedPass2.companyName) mergedPass2.companyName = rawPass2.companyName;
+            if (rawPass2.year && !mergedPass2.year) mergedPass2.year = rawPass2.year;
+            if (rawPass2.printedTotals) {
+              for (const [k, v] of Object.entries(rawPass2.printedTotals)) {
+                if (typeof v === 'number' && !isNaN(v)) mergedPass2.printedTotals[k] = v;
+              }
+            }
+            if (rawPass2.pageCitations) {
+              Object.assign(mergedPass2.pageCitations, rawPass2.pageCitations);
+            }
+            if (Array.isArray(rawPass2.lowConfidenceFields) && rawPass2.lowConfidenceFields.length > 0) {
+              mergedPass2.lowConfidenceFields = rawPass2.lowConfidenceFields;
+            }
+            if (rawPass2.verificationWorksheet) {
+              for (const [k, v] of Object.entries(rawPass2.verificationWorksheet)) {
+                if (typeof v === 'number' && !isNaN(v) && v !== 0) {
+                  mergedPass2.verificationWorksheet[k] = v;
+                }
+              }
+            }
+            if (rawPass2.notes) {
+              Object.assign(mergedPass2.notes, rawPass2.notes);
+            }
+
+            if (rep.section === 'income_statement' && rawPass2.incomeStatement) {
+              for (const k of INCOME_STATEMENT_NUM_KEYS) {
+                if (rawPass2.incomeStatement[k] !== undefined && rawPass2.incomeStatement[k] !== null) {
+                  mergedPass2.incomeStatement[k] = rawPass2.incomeStatement[k];
+                }
+              }
+            } else if (rep.section === 'balance_sheet_assets' && rawPass2.balanceSheet) {
+              for (const k of ASSET_KEYS) {
+                if (rawPass2.balanceSheet[k] !== undefined && rawPass2.balanceSheet[k] !== null) {
+                  mergedPass2.balanceSheet[k] = rawPass2.balanceSheet[k];
+                }
+              }
+            } else if (rep.section === 'balance_sheet_liabilities_equity' && rawPass2.balanceSheet) {
+              for (const k of LIABILITY_EQUITY_KEYS) {
+                if (rawPass2.balanceSheet[k] !== undefined && rawPass2.balanceSheet[k] !== null) {
+                  mergedPass2.balanceSheet[k] = rawPass2.balanceSheet[k];
+                }
+              }
+            }
+          }
 
           const pass2Sanitized = sanitizeFinancialData(reconcileFinancialData(mergedPass2));
           const improved = isCandidateBetter(pass2Sanitized, pass1Result);
+
+          timings.repairMs = Math.round(performance.now() - repairStart);
+          timings.totalMs = Math.round(performance.now() - pipelineStart);
+          timings.totalSeconds = elapsedSec();
+          console.info('[Credita Extraction Timings]', timings);
 
           if (improved) {
             pass2Sanitized.extractionMeta = {
@@ -1005,22 +1490,24 @@ export async function extractFinancialData(
               ...(pass2Sanitized.extractionMeta || {}),
               pass2Attempted: true,
               pass2Improved: true,
-              modelUsed: repairRes.modelUsed || pass1Result.extractionMeta?.modelUsed,
+              modelUsed: validRepairs[0]?.modelUsed || pass1Result.extractionMeta?.modelUsed,
               totalPages: pageCount,
+              timings,
             };
             if (pass2Sanitized.validation) {
               pass2Sanitized.validation.pass2Attempted = true;
               pass2Sanitized.validation.pass2Improved = true;
             }
-            emit('done', 100, 'Pass 2 improved reconciliation accuracy.', 'تم تحسين التطابق في الفحص الثاني بنجاح.');
+            emit('done', 100, `Done (${timings.totalSeconds}s)`, `اكتمل (${timings.totalSeconds} ث)`, timings);
             return pass2Sanitized;
           }
         }
+      } catch (repairErr) {
+        console.warn('Pass 2 targeted repair skipped/failed gracefully, retaining Pass 1:', repairErr);
       }
-    } catch (repairErr) {
-      console.warn('Pass 2 targeted repair skipped/failed gracefully, retaining Pass 1:', repairErr);
     }
 
+    timings.repairMs = Math.round(performance.now() - repairStart);
     pass1Result.extractionMeta = {
       ...(pass1Result.extractionMeta || {}),
       pass2Attempted: true,
@@ -1032,7 +1519,15 @@ export async function extractFinancialData(
     }
   }
 
-  emit('done', 100, 'Extraction & verification complete.', 'اكتمل الاستخراج والتحقق المحاسبي بنجاح.');
+  timings.totalMs = Math.round(performance.now() - pipelineStart);
+  timings.totalSeconds = elapsedSec();
+  pass1Result.extractionMeta = {
+    ...(pass1Result.extractionMeta || {}),
+    timings,
+  };
+
+  console.info('[Credita Extraction Timings]', timings);
+  emit('done', 100, `Done (${timings.totalSeconds}s)`, `اكتمل (${timings.totalSeconds} ث)`, timings);
   return pass1Result;
 }
 
@@ -1185,6 +1680,7 @@ async function prepareFileForUpload(file: File): Promise<{
   base64Data: string;
   mimeType: string;
   pdfDoc: PDFDocument | null;
+  rawBytes?: Uint8Array;
 }> {
   if (file.type.startsWith('image/')) {
     try {
@@ -1209,17 +1705,24 @@ async function prepareFileForUpload(file: File): Promise<{
   }
 
   let pdfDoc: PDFDocument | null = null;
+  let rawBytes: Uint8Array | undefined;
   if (mimeType === 'application/pdf' || nameLower.endsWith('.pdf')) {
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+      rawBytes = new Uint8Array(await file.arrayBuffer());
+      pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
+      return {
+        base64Data: uint8ToBase64(rawBytes),
+        mimeType,
+        pdfDoc,
+        rawBytes,
+      };
     } catch (pdfErr) {
       console.warn('pdf-lib could not parse PDF locally, using direct upload:', pdfErr);
     }
   }
 
   const base64Data = await fileToBase64(file);
-  return { base64Data, mimeType, pdfDoc };
+  return { base64Data, mimeType, pdfDoc, rawBytes };
 }
 
 function compressImageFile(file: File, maxDim = 2048, quality = 0.88): Promise<string> {

@@ -109,9 +109,15 @@ export default async function handler(req: any, res: any) {
   } catch (error: any) {
     console.error("Vercel extraction function error:", error);
     const status = error?.httpStatus || 500;
+    if (error?.retryAfterSeconds) {
+      try {
+        res.setHeader("Retry-After", String(error.retryAfterSeconds));
+      } catch (_) {}
+    }
     return sendJson(res, status, {
       success: false,
       code: error?.code || "EXTRACTION_FAILED",
+      retryAfterSeconds: error?.retryAfterSeconds ?? null,
       error: error?.userMessageEn || error?.message || "Server extraction error",
       errorAr: error?.userMessageAr || "حدث خطأ أثناء معالجة المستند على الخادم. يرجى إعادة المحاولة.",
     });

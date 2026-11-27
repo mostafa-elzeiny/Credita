@@ -125,6 +125,9 @@ function FinSpreadApp() {
   const [supportMessages, setSupportMessages] = useState<any[]>([]);
   const [loadingMessage, setLoadingMessage] = useState('Initializing extraction...');
   const [loadingPercent, setLoadingPercent] = useState(12);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [lastTotalSeconds, setLastTotalSeconds] = useState<number | null>(null);
+  const extractionStartRef = useRef<number | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isUpdatePasswordOpen, setIsUpdatePasswordOpen] = useState(false);
   const [newPassword, setNewPassword] = useState('');
@@ -165,10 +168,27 @@ function FinSpreadApp() {
     localStorage.setItem('darkMode', darkMode.toString());
   }, [darkMode, user, needsVerification]);
 
+  const isAnyExtracting = isProcessing || uploadedFiles.some(f => f.status === 'extracting');
+  useEffect(() => {
+    if (!isAnyExtracting) return;
+    if (!extractionStartRef.current) {
+      extractionStartRef.current = Date.now();
+    }
+    const timer = setInterval(() => {
+      if (extractionStartRef.current) {
+        setElapsedSeconds(Math.floor((Date.now() - extractionStartRef.current) / 1000));
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isAnyExtracting]);
+
   const resetApp = () => {
     setStep('upload');
     setUploadedFiles([]);
     setIsProcessing(false);
+    setElapsedSeconds(0);
+    setLastTotalSeconds(null);
+    extractionStartRef.current = null;
     setLoadingMessage('Initializing extraction...');
   };
 
@@ -431,61 +451,68 @@ function FinSpreadApp() {
 
     setStep('review');
     setIsProcessing(true);
-    setLoadingPercent(8);
-    setLoadingMessage('Preparing document for analysis... / جاري تجهيز المستند...');
+    setElapsedSeconds(0);
+    setLastTotalSeconds(null);
+    extractionStartRef.current = Date.now();
+    setLoadingPercent(5);
+    setLoadingMessage('Preparing document... • جاري تجهيز المستند...');
 
     const idleFiles = uploadedFiles.filter(f => f.status === 'idle');
-    const results: { fileId: string; success: boolean; data?: FinancialData; year?: string }[] = [];
-    
-    for (let index = 0; index < idleFiles.length; index++) {
-      const file = idleFiles[index];
-      if (index > 0) {
-        // Breather between files to avoid triggering Gemini 503 high demand / rate limits
-        await new Promise(resolve => setTimeout(resolve, 1200));
-      }
-      
-      setUploadedFiles(prev => prev.map(f => f.id === file.id ? {
-        ...f,
-        status: 'extracting',
-        error: undefined,
-        progress: { percent: 10, message: 'Preparing PDF / جاري التجهيز...' }
-      } : f));
-      
-      try {
-        const handleProgress = (p: ExtractionProgress) => {
-          const combinedMsg = `${p.messageEn} • ${p.messageAr}`;
-          setLoadingPercent(p.percent);
-          setLoadingMessage(combinedMsg);
+    const idleIds = new Set(idleFiles.map(f => f.id));
+
+    setUploadedFiles(prev => prev.map(f => idleIds.has(f.id) ? {
+      ...f,
+      status: 'extracting',
+      error: undefined,
+      progress: { percent: 5, message: 'Preparing document... • جاري تجهيز المستند...' }
+    } : f));
+
+    const results = await Promise.all(
+      idleFiles.map(async (file) => {
+        try {
+          const handleProgress = (p: ExtractionProgress) => {
+            const combinedMsg = `${p.messageEn} • ${p.messageAr}`;
+            setLoadingPercent(p.percent);
+            setLoadingMessage(combinedMsg);
+            if (typeof p.elapsedSeconds === 'number') {
+              setElapsedSeconds(p.elapsedSeconds);
+            }
+            setUploadedFiles(prev => prev.map(f => f.id === file.id ? {
+              ...f,
+              progress: { percent: p.percent, message: combinedMsg }
+            } : f));
+          };
+
+          const rawData = await extractFinancialData(file.file, false, handleProgress);
+          const data = recalculateFinancials(rawData, true);
+          const yearStr = data.year?.toString() || 'Unknown';
           setUploadedFiles(prev => prev.map(f => f.id === file.id ? {
             ...f,
-            progress: { percent: p.percent, message: combinedMsg }
+            data,
+            year: yearStr,
+            status: 'success',
+            error: undefined,
+            progress: undefined
           } : f));
-        };
+          return { fileId: file.id, success: true, data, year: yearStr };
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : 'Extraction failed';
+          setUploadedFiles(prev => prev.map(f => f.id === file.id ? {
+            ...f,
+            status: 'error',
+            error: errMsg,
+            progress: undefined
+          } : f));
+          return { fileId: file.id, success: false };
+        }
+      })
+    );
 
-        const rawData = await extractFinancialData(file.file, false, handleProgress);
-        const data = recalculateFinancials(rawData, true);
-        const yearStr = data.year?.toString() || 'Unknown';
-        setUploadedFiles(prev => prev.map(f => f.id === file.id ? { 
-          ...f, 
-          data, 
-          year: yearStr, 
-          status: 'success',
-          error: undefined,
-          progress: undefined
-        } : f));
-        results.push({ fileId: file.id, success: true, data, year: yearStr });
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : 'Extraction failed';
-        setUploadedFiles(prev => prev.map(f => f.id === file.id ? { 
-          ...f, 
-          status: 'error', 
-          error: errMsg,
-          progress: undefined
-        } : f));
-        results.push({ fileId: file.id, success: false });
-      }
+    if (extractionStartRef.current) {
+      const totalSec = Math.round(((Date.now() - extractionStartRef.current) / 1000) * 10) / 10;
+      setLastTotalSeconds(totalSec);
+      extractionStartRef.current = null;
     }
-
     setIsProcessing(false);
 
     const successfulItems = results.filter(r => r.success && r.data);
@@ -562,16 +589,21 @@ function FinSpreadApp() {
     const targetFile = uploadedFiles.find(f => f.id === id);
     if (!targetFile) return;
 
+    extractionStartRef.current = Date.now();
+    setElapsedSeconds(0);
     setUploadedFiles(prev => prev.map(f => f.id === id ? {
       ...f,
       status: 'extracting',
       error: undefined,
-      progress: { percent: 10, message: 'High-precision re-extraction starting...' }
+      progress: { percent: 5, message: 'High-precision re-extraction starting... • بدء إعادة الاستخراج بدقة عالية...' }
     } : f));
 
     try {
       const handleProgress = (p: ExtractionProgress) => {
         const combinedMsg = `${p.messageEn} • ${p.messageAr}`;
+        if (typeof p.elapsedSeconds === 'number') {
+          setElapsedSeconds(p.elapsedSeconds);
+        }
         setUploadedFiles(prev => prev.map(f => f.id === id ? {
           ...f,
           progress: { percent: p.percent, message: combinedMsg }
@@ -579,6 +611,12 @@ function FinSpreadApp() {
       };
       const rawData = await extractFinancialData(targetFile.file, true, handleProgress);
       const data = recalculateFinancials(rawData, true);
+      if (data.extractionMeta?.timings?.totalSeconds) {
+        setLastTotalSeconds(data.extractionMeta.timings.totalSeconds);
+      } else if (extractionStartRef.current) {
+        setLastTotalSeconds(Math.round(((Date.now() - extractionStartRef.current) / 1000) * 10) / 10);
+      }
+      extractionStartRef.current = null;
       setUploadedFiles(prev => prev.map(f => f.id === id ? {
         ...f,
         data,
@@ -588,6 +626,7 @@ function FinSpreadApp() {
         progress: undefined
       } : f));
     } catch (err) {
+      extractionStartRef.current = null;
       setUploadedFiles(prev => prev.map(f => f.id === id ? {
         ...f,
         status: 'error',
@@ -1536,9 +1575,13 @@ function FinSpreadApp() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-credita font-bold text-sm truncate">{loadingMessage}</p>
-                        <span className="text-xs font-mono font-bold text-credita shrink-0">{loadingPercent}%</span>
+                        <span className="text-xs font-mono font-bold text-credita shrink-0">
+                          {loadingPercent}% • {elapsedSeconds}s
+                        </span>
                       </div>
-                      <p className="text-slate-500 dark:text-slate-400 text-xs">Processing with verification checks. Large PDFs are automatically split by section.</p>
+                      <p className="text-slate-500 dark:text-slate-400 text-xs">
+                        Parallel section extraction & verification active • جاري الاستخراج المتوازي والتحقق المحاسبي
+                      </p>
                     </div>
                   </div>
                   <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
@@ -1656,7 +1699,7 @@ function FinSpreadApp() {
                             <div className="space-y-1.5">
                               <div className="flex items-center justify-between text-[11px] text-credita font-semibold">
                                 <span className="truncate">{f.progress.message}</span>
-                                <span className="font-mono ml-2">{f.progress.percent}%</span>
+                                <span className="font-mono ml-2 shrink-0">{f.progress.percent}% • {elapsedSeconds}s</span>
                               </div>
                               <div className="w-full h-1 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                                 <div className="h-full bg-credita transition-all duration-300" style={{ width: `${f.progress.percent}%` }} />
@@ -1869,6 +1912,29 @@ function FinSpreadApp() {
                   );
                 })}
               </div>
+
+              {!isProcessing && (lastTotalSeconds !== null || uploadedFiles.some(f => f.data?.extractionMeta?.timings)) && (
+                <div className="pt-2 text-center text-[11px] text-slate-400 dark:text-slate-500 font-mono">
+                  {(() => {
+                    const timingsList = uploadedFiles
+                      .map(f => f.data?.extractionMeta?.timings)
+                      .filter(Boolean);
+                    const totalSec =
+                      lastTotalSeconds ??
+                      timingsList.reduce((acc, t) => acc + (t?.totalSeconds || 0), 0);
+                    const detailTitle = timingsList
+                      .map((t, idx) =>
+                        `File ${idx + 1}: prep ${t?.prepareMs}ms, compress ${t?.compressMs}ms, scan ${t?.scanMs}ms, extract ${t?.extractMs}ms, validate ${t?.validateMs}ms, repair ${t?.repairMs}ms`
+                      )
+                      .join(' | ');
+                    return (
+                      <span title={detailTitle}>
+                        Total extraction time: {totalSec.toFixed(1)}s • إجمالي وقت الاستخراج: {totalSec.toFixed(1)} ث
+                      </span>
+                    );
+                  })()}
+                </div>
+              )}
             </motion.div>
           )}
 

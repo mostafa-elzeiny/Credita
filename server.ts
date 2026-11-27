@@ -367,9 +367,13 @@ app.use(express.urlencoded({ extended: true, limit: '100mb' }));
     } catch (error: any) {
       console.error("Server-side Gemini extraction error:", error);
       const status = error?.httpStatus || 500;
+      if (error?.retryAfterSeconds) {
+        res.setHeader("Retry-After", String(error.retryAfterSeconds));
+      }
       return res.status(status).json({
         success: false,
         code: error?.code || "EXTRACTION_FAILED",
+        retryAfterSeconds: error?.retryAfterSeconds ?? null,
         error: error?.userMessageEn || error?.message || "Failed to extract financial data",
         errorAr: error?.userMessageAr || "تعذر استخراج البيانات المالية من المستند. يرجى إعادة المحاولة.",
       });
